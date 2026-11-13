@@ -49,7 +49,23 @@ async function request(path, { method = 'GET', body, query } = {}) {
   return ct.includes('application/json') ? res.json() : res.text();
 }
 
-const list = (path, query) => request(path, { query: { limit: 0, ...query } }).then((d) => d.items || []);
+// PERF-03: the backend now caps lists at 100 rows per request. Keep the existing
+// callers working by paging through until the server returns a short batch. When
+// PERF-02 (`/dashboard/summary` + lazy module loads) lands, this helper disappears.
+const PAGE_SIZE = 100;
+async function list(path, query = {}) {
+  const items = [];
+  let skip = 0;
+  // Hard safety stop so a misconfigured endpoint can't loop forever.
+  for (let page = 0; page < 1000; page += 1) {
+    const d = await request(path, { query: { limit: PAGE_SIZE, skip, ...query } });
+    const batch = Array.isArray(d.items) ? d.items : [];
+    items.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+    skip += PAGE_SIZE;
+  }
+  return items;
+}
 const get = (path) => request(path);
 const post = (path, body) => request(path, { method: 'POST', body });
 const patch = (path, body) => request(path, { method: 'PATCH', body });
