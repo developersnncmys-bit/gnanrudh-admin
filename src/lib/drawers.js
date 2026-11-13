@@ -76,7 +76,17 @@ export function returnDrawer(id) {
     'Picked up': `<button type="button" class="btn btn-pri" data-act="markReceived" data-id="${r.id}">Mark received at warehouse</button>`,
   }[r.status] || '<span class="small muted">No action needed.</span>';
   openDrawer(`<div class="d-head">${sw(p, 'lg')}<div class="grow"><h2 class="d-title" id="dTitle">Return ${r.id}</h2><div style="display:flex;gap:8px;align-items:center;margin-top:6px">${pill(r.status, RET_TONE[r.status], true)}<span class="small muted">Order ${esc(r.oid)}</span></div></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
-    <div class="d-body"><div class="d-sec"><dl class="kv"><dt>Product</dt><dd>${esc(p.name)}</dd><dt>Customer</dt><dd>${esc(c.name)}</dd><dt>Reason</dt><dd>${esc(r.reason)}</dd><dt>Requested</dt><dd>${fmtD(r.requested)}</dd><dt>Value</dt><dd>${inr(r.amount)}</dd><dt>Paid by</dt><dd>${esc(o.payment.method)}</dd><dt>Reverse shipping</dt><dd>${POLICY.reversePaidBy === 'Store' ? 'Paid by the store' : `${inr(POLICY.reverseFee)} deducted from the refund`}</dd></dl></div>
+    <div class="d-body"><div class="d-sec"><dl class="kv"><dt>Product</dt><dd>${esc(p.name)}</dd><dt>Customer</dt><dd>${esc(c.name)}</dd><dt>Reason</dt><dd>${esc(r.reason)}</dd><dt>Requested</dt><dd>${fmtD(r.requested)}</dd>${(() => {
+        // RET-02: show delivery date, days-since-delivery and an eligibility badge.
+        if (!r.deliveredAt && !o?.deliveredAt) return '';
+        const deliveredAt = r.deliveredAt || o.deliveredAt;
+        const window = r.windowDays || POLICY.window || 7;
+        const days = Math.floor((Date.now() - new Date(deliveredAt).getTime()) / 864e5);
+        const eligible = days <= window;
+        const tone = eligible ? 'ok' : 'bad';
+        return `<dt>Delivered</dt><dd>${fmtD(deliveredAt)} <span class="small muted">· ${days} days ago</span></dd><dt>Eligibility</dt><dd>${pill(eligible ? `Within ${window}-day window` : `Outside ${window}-day window`, tone)}</dd>`;
+      })()}<dt>Value</dt><dd>${inr(r.amount)}</dd><dt>Paid by</dt><dd>${esc(o.payment.method)}</dd><dt>Reverse shipping</dt><dd>${POLICY.reversePaidBy === 'Store' ? 'Paid by the store' : `${inr(POLICY.reverseFee)} deducted from the refund`}</dd></dl></div>
+      ${Array.isArray(r.photos) && r.photos.length ? `<div class="d-sec"><h3>Customer photos</h3><div class="photo-grid">${r.photos.map((u) => `<a class="photo on img" href="${esc(u)}" target="_blank" rel="noopener" style="background-image:url('${esc(u)}')" aria-label="Open photo"></a>`).join('')}</div></div>` : ''}
       ${r.excluded ? '<p class="note n-warn">Not eligible under your returns policy, because the blouse was stitched or the piece was finished to order. The customer was shown this when she tried to request it.</p>' : ''}
       ${o.payment.method === 'Cash on delivery' ? '<p class="note n-info">This was a COD order. Razorpay cannot refund to cash, so the refund needs her bank or UPI details, which she gives when requesting the return.</p>' : ''}
       <div class="d-sec"><h3>Refund</h3><p class="small muted" style="margin:0">Processed through Razorpay to the original payment method. A GST credit note against invoice ${esc(o.invoice)} is generated with the refund.</p></div></div>
