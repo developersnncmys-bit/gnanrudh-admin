@@ -133,6 +133,7 @@ function saveProduct(publish, rerender) {
   const err = !p.name ? 'Give the product a name.'
     : !(p.price > 0) ? 'Enter a price greater than zero.'
     : (p.compareAt !== null && p.compareAt !== '' && !(p.compareAt > p.price)) ? 'Compare-at price must be greater than price.'
+    : (!p.occasions || p.occasions.length === 0) ? 'Pick at least one occasion so the product shows up in filters.'
     : publish && !p.images ? 'Add at least one image before publishing.'
     : publish && (!p.hsn || p.gst === '') ? 'Enter the HSN code and GST rate before publishing, so invoices are correct.'
     : null;

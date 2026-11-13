@@ -126,7 +126,11 @@ export function readProductForm() {
   const p = draftP; if (!p || !document.getElementById('pf-name')) return;
   const set = (k, id, fn = (x) => x) => { const v = val(id); if (v !== undefined) p[k] = fn(v); };
   set('name', 'pf-name'); set('weave', 'pf-weave'); set('price', 'pf-price', (v) => (v === '' ? '' : Number(v.replace(/[^\d.]/g, '')))); set('compareAt', 'pf-compare', (v) => (v === '' ? null : Number(v.replace(/[^\d.]/g, ''))));
-  set('occasion', 'pf-occ'); set('status', 'pf-status'); set('fabric', 'pf-fabric'); set('zari', 'pf-zari'); set('border', 'pf-border'); set('blousePiece', 'pf-blouse', (v) => v === 'yes');
+  set('status', 'pf-status'); set('fabric', 'pf-fabric'); set('zari', 'pf-zari'); set('border', 'pf-border'); set('blousePiece', 'pf-blouse', (v) => v === 'yes');
+  // CAT-04: collect checked occasions. p.occasion (legacy string) mirrors occasions[0].
+  const occs = [...document.querySelectorAll('[name="pf-occ"]:checked')].map((el) => el.value);
+  if (occs.length) { p.occasions = occs; p.occasion = occs[0]; }
+  else { p.occasions = []; p.occasion = ''; }
   set('length', 'pf-length'); set('width', 'pf-width'); set('modelHeight', 'pf-model'); set('drapeStyle', 'pf-drape'); set('care', 'pf-care'); set('colourNote', 'pf-colnote'); set('hsn', 'pf-hsn'); set('gst', 'pf-gst', (v) => (v === '' ? '' : Number(v)));
   // INV-02: stock is derived from pieces now, never typed in the form. No data-vstock read.
 }
@@ -154,7 +158,12 @@ export function productDrawer(id) {
         ${f('Category', 'pf-cat', sel('pf-cat', categories.map((x) => [x.id, x.name]), p.cat))}
         ${f('Weave or type', 'pf-weave', sel('pf-weave', c.weaves.includes(p.weave) ? c.weaves : [p.weave, ...c.weaves], p.weave))}
         ${f('Price, ₹, incl. GST', 'pf-price', inp('pf-price', p.price))}${f('Compare-at price, ₹', 'pf-compare', inp('pf-compare', p.compareAt || '', 'Optional'))}
-        ${f('Occasion', 'pf-occ', sel('pf-occ', OCCASIONS, p.occasion), 'Used for filters and CRM occasion tagging')}
+        ${(() => {
+          // CAT-04: at least one occasion must be picked. Multi-select checkbox group.
+          const picked = new Set((p.occasions && p.occasions.length ? p.occasions : (p.occasion ? [p.occasion] : [])));
+          const chips = OCCASIONS.map((o) => `<label style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);cursor:pointer"><input type="checkbox" name="pf-occ" value="${esc(o)}"${picked.has(o) ? ' checked' : ''} style="margin:0"><span>${esc(o)}</span></label>`).join('');
+          return f('Occasions', 'pf-occ', `<div id="pf-occ" style="display:flex;flex-wrap:wrap;gap:8px">${chips}</div>`, 'At least one required. Multiple allowed.', true);
+        })()}
         ${f('Status', 'pf-status', sel('pf-status', [['Active', 'Live'], 'Draft', 'Hidden'], p.status))}</div></div>
       <div class="d-sec"><h3>Colour variants and stock <button type="button" class="btn btn-sec btn-sm" data-act="addVariant">${icon('plus')}Add colour</button></h3>
         <p class="small muted" style="margin:-2px 0 10px">Stock is read-only here. Every piece is barcoded; add stock through <b>Receive stock</b> on each row.</p>
