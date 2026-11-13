@@ -38,8 +38,18 @@ export function closeDrawer(silent) {
 }
 
 /* ---------- ORDER ---------- */
+// CUS-03: tiny helper for drawers that die with a soft "not found" panel when
+// their primary record or a joined reference is missing, instead of throwing.
+function notFoundDrawer(what, id) {
+  openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">${esc(what)} not found</h2><p class="small muted" style="margin:4px 0 0">ID ${esc(String(id))}</p></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div><div class="d-body"><p class="note n-warn" style="margin:0">This record no longer exists. The ID is probably a stale reference from another record that wasn't cleaned up.</p></div>`);
+}
+
 export function orderDrawer(id) {
-  const o = ORD[id]; const c = CUST[o.cid]; const g = gstLines(o);
+  const o = ORD[id];
+  if (!o) return notFoundDrawer('Order', id);
+  const c = CUST[o.cid];
+  if (!c) return notFoundDrawer('Customer for order ' + id, o.cid);
+  const g = gstLines(o);
   const actions = {
     'Payment pending': [['cancelOrder', 'Cancel order', 'btn-bad'], ['checkPayment', 'Check with Razorpay', 'btn-sec']],
     'Label generated': [['printLabel', 'Print label', 'btn-sec']],
@@ -49,7 +59,14 @@ export function orderDrawer(id) {
   const events = shipLog.filter((s) => s.oid === o.id).slice().reverse();
   openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">Order ${o.id}</h2><div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">${pill(o.status, ORDER_TONE[o.status], true)}${pill(o.payment.status, PAY_TONE[o.payment.status])}<span class="small muted">${esc(dtF.format(new Date(o.placed)))}, from ${esc(o.source)}</span></div></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
     <div class="d-body">
-      <div class="d-sec"><h3>Items</h3><ul class="list">${o.items.map((it) => { const p = PROD[it.pid]; const v = variantOf(it); return `<li>${swv(v, p, '')}<div class="grow"><b>${esc(p.name)}</b><span class="sub">${esc(v.colour)}${v.size ? `, size ${v.size}` : ''}, SKU ${esc(v.sku)}, HSN ${esc(p.hsn)}</span></div><span class="strong">${inr(it.price)}</span></li>`; }).join('')}</ul></div>
+      <div class="d-sec"><h3>Items</h3><ul class="list">${o.items.map((it) => {
+        const p = PROD[it.pid];
+        // CUS-03: if the product was deleted after the order was placed, render a stub
+        // row with the id — never throw.
+        if (!p) return `<li><div class="grow"><b class="muted">Product no longer in catalogue</b><span class="sub">ID ${esc(it.pid)}, SKU ${esc(it.vid)}</span></div><span class="strong">${inr(it.price)}</span></li>`;
+        const v = variantOf(it);
+        return `<li>${swv(v, p, '')}<div class="grow"><b>${esc(p.name)}</b><span class="sub">${esc(v?.colour || 'variant removed')}${v?.size ? `, size ${v.size}` : ''}, SKU ${esc(v?.sku || it.vid)}, HSN ${esc(p.hsn)}</span></div><span class="strong">${inr(it.price)}</span></li>`;
+      }).join('')}</ul></div>
       <div class="grid g2">
         <div class="d-sec"><h3>Payment</h3><dl class="sum"><dt>Subtotal</dt><dd>${inr(o.sub)}</dd>${o.discount ? `<dt>Coupon ${esc(o.coupon)}</dt><dd>− ${inr(o.discount)}</dd>` : ''}<dt>Shipping</dt><dd>${o.shipping ? inr(o.shipping) : 'Free'}</dd><dt class="tot">Total, incl. GST</dt><dd class="tot">${inr(o.total)}</dd></dl>
           <p class="sub" style="margin-top:8px">${esc(o.payment.method)}${o.payment.rzp ? `, Razorpay ${esc(o.payment.rzp)}` : ''}. Status ${esc(o.payment.status.toLowerCase())}, as reported by Razorpay.</p></div>
@@ -68,7 +85,13 @@ export function orderDrawer(id) {
 
 /* ---------- RETURN ---------- */
 export function returnDrawer(id) {
-  const r = returns.find((x) => x.id === id); const p = PROD[r.pid]; const c = CUST[r.cid]; const o = ORD[r.oid];
+  const r = returns.find((x) => x.id === id);
+  if (!r) return notFoundDrawer('Return', id);
+  // CUS-03: deleted product / customer / order shouldn't crash the drawer.
+  // Fall back to stubs with the id so the operator can still act on status/refund.
+  const p = PROD[r.pid] || { name: `Product ${r.pid} (removed)`, hsn: '', variants: [] };
+  const c = CUST[r.cid] || { name: `Customer ${r.cid} (removed)`, phone: '', city: '' };
+  const o = ORD[r.oid] || { payment: { method: 'Unknown', status: 'Unknown' }, invoice: '', deliveredAt: null };
   const foot = {
     Requested: `<button type="button" class="btn btn-bad" data-act="rejectReturn" data-id="${r.id}" style="margin-right:auto">Reject</button><button type="button" class="btn btn-pri" data-act="approveReturn" data-id="${r.id}">Approve and raise reverse pickup</button>`,
     Received: `<button type="button" class="btn btn-bad" data-act="rejectReturn" data-id="${r.id}" style="margin-right:auto">Reject after inspection</button><button type="button" class="btn btn-pri" data-act="refundReturn" data-id="${r.id}">Refund ${inr(r.amount)}</button>`,
@@ -193,7 +216,10 @@ categoryDrawer.image = '';
 /* ---------- CUSTOMER ---------- */
 export function customerDrawer(id) {
   const c = CUST[id];
-  const os = c.orders.map((x) => ORD[x]);
+  if (!c) return notFoundDrawer('Customer', id);
+  // CUS-03: filter out orders that were purged. Keeps the drawer from crashing
+  // on any downstream access like ORD[x].items or .placed.
+  const os = (c.orders || []).map((x) => ORD[x]).filter(Boolean);
   const cr = returns.filter((r) => r.cid === id);
   openDrawer(`<div class="d-head"><span class="avatar ${avc(c.name)}" style="width:48px;height:48px;font-size:15px">${esc(initials(c.name))}</span><div class="grow"><h2 class="d-title" id="dTitle">${esc(c.name)}</h2><div style="display:flex;gap:8px;align-items:center;margin-top:6px">${seg(c.segment)}<span class="small muted">Customer since ${esc(fmtD(c.since))}, came from ${esc(c.source)}</span></div></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
     <div class="d-body">
@@ -204,7 +230,15 @@ export function customerDrawer(id) {
       <div class="d-sec"><h3>Notes <button type="button" class="link small" data-act="addNote" data-id="${c.id}">Add note</button></h3>${c.notes.length ? `<ul class="list">${c.notes.map((n) => `<li><span class="grow">${esc(n.text)}<span class="sub">${esc(fmtD(n.at))}</span></span></li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">No notes yet. For example: “prefers lighter zari”.</p>'}</div>
       <div class="d-sec"><h3>Payments</h3><dl class="kv"><dt>Paid online</dt><dd>${c.payments.paid}</dd><dt>Cash on delivery</dt><dd>${c.payments.cod}</dd><dt>Refunded</dt><dd>${c.payments.refunded}</dd><dt>Pending</dt><dd>${c.payments.pending}</dd></dl></div>
       <div class="d-sec"><h3>History</h3>${os.length ? `<ul class="list">${os.map((o) => `<li><span class="grow"><button type="button" class="link" data-open="order:${o.id}">${o.id}</button><span class="sub">${esc(fmtD(o.placed))}, ${esc(o.items.map((it) => PROD[it.pid].weave).join(', '))}</span></span>${pill(o.status, ORDER_TONE[o.status])}<span class="strong">${inr(o.total)}</span></li>`).join('')}${cr.map((r) => `<li><span class="grow">Return ${esc(r.id)}<span class="sub">${esc(r.reason)}</span></span>${pill(r.status, RET_TONE[r.status])}</li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">No orders yet.</p>'}</div>
-      ${c.wishlist.length ? `<div class="d-sec"><h3>Saved items</h3><ul class="list">${c.wishlist.map((pid) => `<li>${sw(PROD[pid], 'sm')}<span class="grow">${esc(PROD[pid].name)}<span class="sub">${inr(PROD[pid].price)}${stockOf(PROD[pid]) ? '' : ', sold out'}</span></span></li>`).join('')}</ul></div>` : ''}
+      ${(() => {
+        // CUS-03: wishlists in prod data hold IDs of products that were later deleted.
+        // Silently skip missing products so the drawer never crashes on one bad ref.
+        const live = (c.wishlist || []).map((pid) => ({ pid, p: PROD[pid] })).filter(({ p }) => p);
+        const removed = (c.wishlist || []).length - live.length;
+        if (!live.length && !removed) return '';
+        const removedNote = removed ? `<p class="small muted">${plural(removed, 'saved item')} no longer in the catalogue.</p>` : '';
+        return `<div class="d-sec"><h3>Saved items</h3>${removedNote}<ul class="list">${live.map(({ p }) => `<li>${sw(p, 'sm')}<span class="grow">${esc(p.name)}<span class="sub">${inr(p.price)}${stockOf(p) ? '' : ', sold out'}</span></span></li>`).join('')}</ul></div>`;
+      })()}
     </div>`);
 }
 
