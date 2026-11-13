@@ -71,19 +71,21 @@ export let invSeq = 1, cnSeq = 1;
 export const bumpInv = () => invSeq++;
 export const bumpCn = () => cnSeq++;
 
-/* ---------- Analytics: still client-generated (not part of the backend) ---------- */
-const rng = (seed) => () => { let t = (seed += 0x6d2b79f5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-const between = (a, b, r) => a + Math.floor(r() * (b - a + 1));
-export const analytics = (() => {
-  const r = rng(77);
-  return {
-    live: between(14, 46, r), avgSession: `${between(3, 6, r)} min ${between(5, 55, r)} s`, pagesPerSession: (3 + r() * 3).toFixed(1),
-    funnel: [['Home', 18420], ['Shop or category', 11980], ['Product page', 8650], ['Added to cart', 1490], ['Checkout started', 820], ['Paid', 512]],
-    sources: [['Instagram', 34], ['Google', 29], ['Direct', 18], ['WhatsApp', 14], ['Referral', 5]],
-    carts: { count: 978, value: 21480000, top: [] },
-    cohorts: ['Jun', 'Jul', 'Aug', 'Sep', 'Oct'].map((m, i) => ({ m, size: between(80, 160, r), ret: Array.from({ length: 5 - i }, (_, k) => (k === 0 ? 100 : Math.max(4, Math.round(26 - k * 4 + r() * 6)))) })),
-  };
-})();
+// DATA-01/02: the simulated analytics object is gone. Every surface that used to
+// show "visitors on the site now", funnel / sources / cohorts / abandoned carts
+// now renders an empty state wired to `analytics.connected === false`.
+// When a real provider lands (GA4 / PostHog / Clarity), this object is filled
+// from the backend `/stats/analytics` endpoint and `connected` flips to true.
+export const analytics = {
+  connected: false,
+  live: null,
+  avgSession: null,
+  pagesPerSession: null,
+  funnel: [],
+  sources: [],
+  carts: { count: 0, value: 0, top: [] },
+  cohorts: [],
+};
 
 /* ---------- Helpers ---------- */
 const pad = (n) => String(n).padStart(2, '0');

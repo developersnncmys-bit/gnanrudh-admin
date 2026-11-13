@@ -57,7 +57,7 @@ PAGES.dashboard = () => {
       ${kpi('COD to collect', inrS(codPendingAmt), `<span class="faint">${nf.format(codPending.length)} order${codPending.length === 1 ? '' : 's'} with the courier</span>`)}
       ${kpi('Orders', nf.format(cur.length), `${delta(cur.length, prev.length)}<span class="faint">${cur.filter((o) => o.payment.method === 'Cash on delivery').length} on COD</span>`)}
       ${kpi('Average order', inrS(cur.length ? rev / cur.length : 0), `${delta(cur.length ? rev / cur.length : 0, prev.length ? prevRev / prev.length : 0)}<span></span>`)}
-      ${kpi('Visitors on the site now', nf.format(analytics.live), `<span class="faint">Average visit ${analytics.avgSession}</span>`)}
+      ${analytics.connected ? kpi('Visitors on the site now', nf.format(analytics.live), `<span class="faint">Average visit ${analytics.avgSession}</span>`) : kpi('Visitors on the site now', '—', '<span class="faint"><a class="link" href="/settings#analytics">Connect analytics</a> to see this</span>')}
       ${kpi('Repeat customers', `${Math.round(pct(repeatCust, buyers))}%`, `<span class="faint">${repeatCust} of ${buyers} buyers</span>`)}
     </div>
     <div class="grid g-main">
@@ -400,31 +400,35 @@ PAGES.analytics = () => {
   const byCity = Object.entries(orders.filter((o) => paid(o) && inDays(o, 0, 30)).reduce((a, o) => { const c = CUST[o.cid].city; a[c] = (a[c] || 0) + o.total; return a; }, {})).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 8);
   const repeaters = customers.filter((c) => c.orderCount >= 2);
   const gaps = repeaters.map((c) => { const ds = c.orders.map((id) => new Date(ORD[id].placed)).sort((a, b) => a - b); return (ds[ds.length - 1] - ds[0]) / 864e5 / (ds.length - 1); }).filter((x) => x > 0);
-  const f0 = analytics.funnel[0][1];
+  // DATA-01/02: analytics.connected is false until a provider is wired. Guard every
+  // panel so stripping the fakes doesn't crash the page.
+  const f0 = analytics.funnel[0] ? analytics.funnel[0][1] : 0;
+  const notConnected = '<div class="panel-body"><p class="note n-neutral" style="margin:0">Connect an analytics provider on <a class="link" href="/settings#analytics">Settings → Analytics</a> to populate this panel.</p></div>';
   const topProducts = products.filter((p) => p.status === 'Active').sort((a, b) => b.views - a.views).slice(0, 6);
   return `<div class="page-head"><div><h1 class="h1">Analytics</h1><p class="lede">Payments from Razorpay, and visitor behaviour from the analytics tool. Visitor numbers miss people who decline tracking or use ad blockers.</p></div></div>
+    ${analytics.connected ? '' : '<p class="note n-warn" style="margin:12px 0">No analytics provider connected. Payments/categories/cities below come from real orders; visitor funnel, sources, abandoned carts and cohorts are blank. <a class="link" href="/settings#analytics">Connect analytics</a> to populate them.</p>'}
     <div class="kpis">
       <div class="kpi"><div class="kpi-label">Payments today</div><div class="kpi-val">${inrS(sum((o) => inDays(o, 0, 1)))}</div></div>
       <div class="kpi"><div class="kpi-label">This week</div><div class="kpi-val">${inrS(sum((o) => inDays(o, 0, 7)))}</div></div>
       <div class="kpi"><div class="kpi-label">This month</div><div class="kpi-val">${inrS(sum((o) => inDays(o, 0, 30)))}</div></div>
-      <div class="kpi"><div class="kpi-label">On the site now</div><div class="kpi-val">${analytics.live}</div><div class="kpi-foot"><span class="faint">${analytics.pagesPerSession} pages a visit</span></div></div>
-      <div class="kpi"><div class="kpi-label">Average visit</div><div class="kpi-val" style="font-size:1.25rem">${analytics.avgSession}</div></div>
+      ${analytics.connected ? `<div class="kpi"><div class="kpi-label">On the site now</div><div class="kpi-val">${analytics.live}</div><div class="kpi-foot"><span class="faint">${analytics.pagesPerSession} pages a visit</span></div></div>
+      <div class="kpi"><div class="kpi-label">Average visit</div><div class="kpi-val" style="font-size:1.25rem">${analytics.avgSession}</div></div>` : `<div class="kpi"><div class="kpi-label">Visitors</div><div class="kpi-val">—</div><div class="kpi-foot"><span class="faint"><a class="link" href="/settings#analytics">Connect analytics</a></span></div></div>`}
     </div>
     <div class="grid g2">
-      <section class="panel"><div class="panel-head"><div><h2 class="h2">From home to payment, 30 days</h2><p>Visitors reaching each step, and how many dropped off.</p></div></div><div class="panel-body">
-        ${analytics.funnel.map(([s, n], i) => `<div class="hbar"><span>${esc(s)}${i ? `<span class="sub">${Math.round(100 - pct(n, analytics.funnel[i - 1][1]))}% dropped off</span>` : ''}</span><div class="bar"><span style="width:${pct(n, f0)}%"></span></div><span class="strong">${nf.format(n)}</span></div>`).join('')}</div></section>
+      <section class="panel"><div class="panel-head"><div><h2 class="h2">From home to payment, 30 days</h2><p>Visitors reaching each step, and how many dropped off.</p></div></div>${analytics.connected ? `<div class="panel-body">
+        ${analytics.funnel.map(([s, n], i) => `<div class="hbar"><span>${esc(s)}${i ? `<span class="sub">${Math.round(100 - pct(n, analytics.funnel[i - 1][1]))}% dropped off</span>` : ''}</span><div class="bar"><span style="width:${pct(n, f0)}%"></span></div><span class="strong">${nf.format(n)}</span></div>`).join('')}</div>` : notConnected}</section>
       <section class="panel"><div class="panel-head"><h2 class="h2">Payments by category, 30 days</h2></div><div class="panel-body">${hbars(categories.map((c) => ({ label: c.name, value: orders.filter((o) => paid(o) && inDays(o, 0, 30)).flatMap((o) => o.items).filter((it) => PROD[it.pid].cat === c.id).reduce((a, it) => a + it.price, 0) })).sort((a, b) => b.value - a.value), { fmt: inrS })}</div></section>
       <section class="panel"><div class="panel-head"><h2 class="h2">Payments by city, 30 days</h2></div><div class="panel-body">${hbars(byCity, { fmt: inrS })}</div></section>
-      <section class="panel"><div class="panel-head"><h2 class="h2">Where visitors came from</h2></div><div class="panel-body">${hbars(analytics.sources.map(([label, value]) => ({ label, value })), { fmt: (v) => `${v}%`, tone: 'zari' })}<p class="sub">Only where the browser reports it.</p></div></section>
+      <section class="panel"><div class="panel-head"><h2 class="h2">Where visitors came from</h2></div>${analytics.connected ? `<div class="panel-body">${hbars(analytics.sources.map(([label, value]) => ({ label, value })), { fmt: (v) => `${v}%`, tone: 'zari' })}<p class="sub">Only where the browser reports it.</p></div>` : notConnected}</section>
       <section class="panel"><div class="panel-head"><div><h2 class="h2">Most viewed products</h2><p>What holds attention, 30 days.</p></div></div><div class="panel-body"><ul class="list">${topProducts.map((p) => `<li>${sw(p, 'sm')}<span class="grow">${esc(p.name)}<span class="sub">${(pct(p.carts, p.views)).toFixed(1)}% added to cart</span></span><span class="strong">${nf.format(p.views)}</span></li>`).join('')}</ul></div></section>
       <section class="panel"><div class="panel-head"><div><h2 class="h2">Top category pages and articles</h2></div></div><div class="panel-body">${hbars([...categories.map((c, i) => ({ label: c.name, value: [8420, 6110, 3980, 2870, 2240, 1510][i] })), ...journal.filter((j) => j.views).slice(0, 3).map((j) => ({ label: j.title, value: j.views, tone: 'zari' }))].sort((a, b) => b.value - a.value), {})}</div></section>
-      <section class="panel"><div class="panel-head"><div><h2 class="h2">Abandoned carts, 30 days</h2><p>${nf.format(analytics.carts.count)} carts left, ${inrS(analytics.carts.value)} in value.</p></div></div><div class="panel-body"><ul class="list">${analytics.carts.top.map(([pid, n]) => `<li>${sw(PROD[pid], 'sm')}<span class="grow">${esc(PROD[pid].name)}<span class="sub">${inr(PROD[pid].price)}</span></span><span class="strong">${n} carts</span></li>`).join('')}</ul></div></section>
+      <section class="panel"><div class="panel-head"><div><h2 class="h2">Abandoned carts, 30 days</h2>${analytics.connected ? `<p>${nf.format(analytics.carts.count)} carts left, ${inrS(analytics.carts.value)} in value.</p>` : ''}</div></div>${analytics.connected ? `<div class="panel-body"><ul class="list">${analytics.carts.top.map(([pid, n]) => `<li>${sw(PROD[pid], 'sm')}<span class="grow">${esc(PROD[pid].name)}<span class="sub">${inr(PROD[pid].price)}</span></span><span class="strong">${n} carts</span></li>`).join('')}</ul></div>` : notConnected}</section>
       <section class="panel"><div class="panel-head"><div><h2 class="h2">Repeat customers</h2></div></div><div class="panel-body"><dl class="sum"><dt>Ordered more than once</dt><dd class="strong">${repeaters.length} customers, ${Math.round(pct(repeaters.length, customers.filter((c) => c.orderCount).length))}%</dd><dt>Average days between orders</dt><dd class="strong">${gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : '—'} days</dd></dl></div></section>
     </div>
     <section class="panel" style="margin-top:16px"><div class="panel-head"><div><h2 class="h2">Returning customers by first-order month</h2><p>Of customers whose first order was in each month, the share who ordered again in each following month.</p></div></div>
-      <div class="scroll" style="margin-top:12px"><table class="t"><thead><tr><th><span>First order</span></th><th class="r"><span>Customers</span></th>${['Month 0', 'Month 1', 'Month 2', 'Month 3', 'Month 4'].map((m) => `<th class="r"><span>${m}</span></th>`).join('')}</tr></thead><tbody>
+      ${analytics.connected ? `<div class="scroll" style="margin-top:12px"><table class="t"><thead><tr><th><span>First order</span></th><th class="r"><span>Customers</span></th>${['Month 0', 'Month 1', 'Month 2', 'Month 3', 'Month 4'].map((m) => `<th class="r"><span>${m}</span></th>`).join('')}</tr></thead><tbody>
       ${analytics.cohorts.map((c) => `<tr><td><b>${c.m}</b></td><td class="r">${c.size}</td>${[0, 1, 2, 3, 4].map((k) => `<td class="r">${c.ret[k] !== undefined ? `<span style="display:inline-block;min-width:46px;padding:3px 6px;border-radius:4px;background:rgba(123,35,66,${(c.ret[k] / 100) * 0.9 + 0.05});color:${c.ret[k] > 50 ? '#fff' : 'var(--ink)'}">${c.ret[k]}%</span>` : ''}</td>`).join('')}</tr>`).join('')}
-      </tbody></table></div></section>`;
+      </tbody></table></div>` : notConnected}</section>`;
 };
 
 /* =============== PRODUCT ANALYTICS =============== */
@@ -458,6 +462,7 @@ PAGES.productAnalytics = () => {
   const totalRev = Object.values(revenueByPid).reduce((a, b) => a + b, 0);
   const emptyList = (msg) => `<li class="empty"><strong>${esc(msg)}</strong></li>`;
   return `<div class="page-head"><div><h1 class="h1">Product analytics</h1><p class="lede">What’s selling, what’s being looked at, and where interest turns into orders. Sold counts are from paid orders; views come from storefront analytics.</p></div></div>
+    ${analytics.connected ? '' : '<p class="note n-warn" style="margin:12px 0">No analytics provider connected. Sold counts and revenue are real; views and conversion rates are placeholders. <a class="link" href="/settings#analytics">Connect analytics</a> to see actual numbers.</p>'}
     <div class="kpis">
       <div class="kpi"><div class="kpi-label">Top-selling product</div><div class="kpi-val" style="font-size:1.05rem;line-height:1.3">${topProduct ? esc(topProduct.name) : '—'}</div><div class="kpi-foot"><span class="faint">${topProduct ? `${plural(topProduct.sold, 'unit')} · ${inrS(topProduct.revenue)}` : 'No sales yet'}</span></div></div>
       <div class="kpi"><div class="kpi-label">Most visited category</div><div class="kpi-val" style="font-size:1.05rem;line-height:1.3">${topCategory && topCategory.views ? esc(topCategory.name) : '—'}</div><div class="kpi-foot"><span class="faint">${topCategory && topCategory.views ? `${nf.format(topCategory.views)} views` : 'No views tracked'}</span></div></div>
