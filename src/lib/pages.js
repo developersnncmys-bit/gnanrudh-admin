@@ -37,8 +37,10 @@ PAGES.dashboard = () => {
   const delta = (a, b) => { if (!b) return '<span class="faint">—</span>'; const d = ((a - b) / b) * 100; return `<span class="${d >= 0 ? 't-ok' : 't-bad'} strong">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)}%</span>`; };
   const repeatCust = customers.filter((c) => c.orderCount >= 2).length, buyers = customers.filter((c) => c.orderCount >= 1).length;
   const kpi = (l, v, f) => `<div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-val">${v}</div><div class="kpi-foot">${f}</div></div>`;
-  const days = Array.from({ length: 30 }, (_, i) => addDays(TODAY, i - 29));
-  const byCat = (ids) => days.map((d) => orders.filter((o) => paid(o) && daysFrom(o.placed) === daysFrom(d)).flatMap((o) => o.items).filter((it) => ids.includes(PROD[it.pid].cat)).reduce((a, it) => a + it.price, 0));
+  // Phase 4: chart window follows the selected dashRange toggle (Today / 7 / 30 days).
+  const chartSpan = Math.max(dashRange, 7); // Today alone would be one point; show a week minimum.
+  const days = Array.from({ length: chartSpan }, (_, i) => addDays(TODAY, i - (chartSpan - 1)));
+  const byCat = (ids) => days.map((d) => orders.filter((o) => paid(o) && daysFrom(o.placed) === daysFrom(d)).flatMap((o) => o.items).filter((it) => PROD[it.pid] && ids.includes(PROD[it.pid].cat)).reduce((a, it) => a + it.price, 0));
   const items = [
     [q.ndr, 'Failed deliveries to act on', 'Shiprocket raised an NDR. Reattempt, update the address or return to origin.', '/orders', 'bad'],
     [q.pending, 'Payments pending in Razorpay', 'Usually a UPI payment not yet confirmed. The order is pushed to Shiprocket once it clears.', '/orders', 'warn'],
@@ -68,11 +70,11 @@ PAGES.dashboard = () => {
         <section class="panel"><div class="panel-head"><h2 class="h2">Sales by category, 30 days</h2></div><div class="panel-body">${hbars(categories.map((c) => ({ label: c.name, value: orders.filter((o) => paid(o) && inDays(o, 0, 30)).flatMap((o) => o.items).filter((it) => PROD[it.pid].cat === c.id).reduce((a, it) => a + it.price, 0) })).sort((a, b) => b.value - a.value), { fmt: inrS })}</div></section>
       </div>
     </div>
-    <section class="panel" style="margin-top:16px"><div class="panel-head"><div><h2 class="h2">Payments received, last 30 days</h2><p>Stacked by category group. Hover a day for the split.</p></div><div class="legend"><span><i style="background:#05380d"></i>Silk</span><span><i style="background:#E0AE6D"></i>Cotton, designer and ethnic sets</span></div></div>
+    <section class="panel" style="margin-top:16px"><div class="panel-head"><div><h2 class="h2">Payments received, last ${chartSpan} days</h2><p>Stacked by category group. Hover a day for the split.</p></div><div class="legend"><span><i style="background:#05380d"></i>Silk</span><span><i style="background:#E0AE6D"></i>Cotton, designer and ethnic sets</span></div></div>
       <div class="panel-body">${areaChart([byCat(['silk']), byCat(['cotton', 'designer', 'lehenga', 'acc'])], days.map((d) => dmF.format(d)), { names: ['Silk', 'Cotton, designer, ethnic'] })}</div></section>
     <section class="panel" style="margin-top:16px"><div class="panel-head"><h2 class="h2">Latest orders</h2><a class="link" href="/orders">All orders</a></div>
       <div class="scroll" style="margin-top:12px"><table class="t" style="min-width:820px"><thead><tr><th><span>Order</span></th><th><span>Customer</span></th><th><span>Product</span></th><th><span>Payment</span></th><th class="r"><span>Total</span></th><th><span>Status</span></th></tr></thead><tbody>
-      ${orders.slice(0, 6).map((o) => `<tr class="click" data-open="order:${o.id}"><td><b>${o.id}</b><span class="sub">${esc(tF.format(new Date(o.placed)))}</span></td><td>${esc(CUST[o.cid].name)}<span class="sub">${esc(CUST[o.cid].city)}</span></td><td>${prodCell(PROD[o.items[0].pid], o.items.length > 1 ? `, and ${o.items.length - 1} more` : '')}</td><td>${pill(o.payment.status, PAY_TONE[o.payment.status])}<span class="sub">${esc(o.payment.method)}</span></td><td class="r strong">${inr(o.total)}</td><td>${pill(o.status, ORDER_TONE[o.status], true)}</td></tr>`).join('')}
+      ${orders.slice(0, 6).map((o) => `<tr class="click" data-open="order:${o.id}"><td><b>${o.id}</b><span class="sub">${esc(dtF.format(new Date(o.placed)))}</span></td><td>${esc(CUST[o.cid].name)}<span class="sub">${esc(CUST[o.cid].city)}</span></td><td>${prodCell(PROD[o.items[0].pid], o.items.length > 1 ? `, and ${o.items.length - 1} more` : '')}</td><td>${pill(o.payment.status, PAY_TONE[o.payment.status])}<span class="sub">${esc(o.payment.method)}</span></td><td class="r strong">${inr(o.total)}</td><td>${pill(o.status, ORDER_TONE[o.status], true)}</td></tr>`).join('')}
       </tbody></table></div></section>`;
 };
 

@@ -16,10 +16,14 @@ import LoginPage from './components/LoginPage.jsx';
 
 // Parse the current URL into [page, entityRef]. Accepts both clean (/orders/GR123)
 // and legacy hash (#/orders/GR123) forms so old bookmarks still work.
+// Phase 4 URL aliases: kebab-case paths map to the admin's camelCase page keys.
+const PAGE_ALIASES = { 'price-ranges': 'priceRanges', 'product-analytics': 'productAnalytics' };
 function parseLocation() {
   const hash = String(window.location.hash || '').replace(/^#\/?/, '');
   const source = hash || String(window.location.pathname || '').replace(/^\/+/, '');
-  return source.split('/').filter(Boolean);
+  const parts = source.split('/').filter(Boolean);
+  if (parts[0] && PAGE_ALIASES[parts[0]]) parts[0] = PAGE_ALIASES[parts[0]];
+  return parts;
 }
 
 function App() {
@@ -57,7 +61,14 @@ function App() {
     closeDrawer(true);
     try { window.scrollTo(0, 0); } catch { /* ignore */ }
     setTimeout(() => contentRef.current?.focus({ preventScroll: true }), 0);
-    if (h[1]) openEntity(decodeURIComponent(h[1]));
+    // ORD-02: support /orders/:id, /customers/:id, /products/:id deep links.
+    // Map the route to the entity kind openEntity expects (`order:<id>` etc).
+    const KIND_FROM_ROUTE = { orders: 'order', customers: 'customer', products: 'product', returns: 'return', journal: 'article' };
+    if (h[1]) {
+      const kind = KIND_FROM_ROUTE[next];
+      const ref = kind ? `${kind}:${decodeURIComponent(h[1])}` : decodeURIComponent(h[1]);
+      openEntity(ref);
+    }
   }, []);
 
   // Fetch everything from the backend once the user is signed in
@@ -141,10 +152,33 @@ function App() {
         return A[act.dataset.act](act, e);
       }
       const open = e.target.closest('[data-open]');
-      if (open && !e.target.closest('input[type="checkbox"], [data-act]')) return openEntity(open.dataset.open);
+      if (open && !e.target.closest('input[type="checkbox"], [data-act]')) {
+        // ORD-02: push a shareable URL that matches the drawer kind, then open it.
+        const ref = open.dataset.open;
+        const [kind, id] = ref.split(':');
+        const ROUTE_FROM_KIND = { order: 'orders', customer: 'customers', product: 'products', return: 'returns', article: 'journal' };
+        const path = ROUTE_FROM_KIND[kind] && id ? `/${ROUTE_FROM_KIND[kind]}/${encodeURIComponent(id)}` : null;
+        if (path) { try { if (window.location.pathname !== path) window.history.pushState(null, '', path); } catch { /* ignore */ } }
+        return openEntity(ref);
+      }
     };
     document.addEventListener('click', onClick);
-    return () => document.removeEventListener('click', onClick);
+    // A11Y-01: list rows have tabindex=0 + role=link. Enter/Space opens them with the
+    // same code path as a click so operators can drive the admin from the keyboard.
+    const onKey = (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target.closest('tr[data-open]');
+      if (!row || e.target.closest('input, button, a, select, textarea, [data-act]')) return;
+      e.preventDefault();
+      const ref = row.dataset.open;
+      const [kind, id] = ref.split(':');
+      const ROUTE_FROM_KIND = { order: 'orders', customer: 'customers', product: 'products', return: 'returns', article: 'journal' };
+      const path = ROUTE_FROM_KIND[kind] && id ? `/${ROUTE_FROM_KIND[kind]}/${encodeURIComponent(id)}` : null;
+      if (path) { try { if (window.location.pathname !== path) window.history.pushState(null, '', path); } catch { /* ignore */ } }
+      openEntity(ref);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('click', onClick); document.removeEventListener('keydown', onKey); };
   }, [navigate, renderPage]);
 
   // Global change delegation

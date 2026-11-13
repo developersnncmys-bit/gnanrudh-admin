@@ -284,7 +284,14 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     cartRemindBulk: () => sendReminder(lvSelected('carts').map((id) => AB[id])),
     cartRemindProduct: (el) => sendReminder(abCarts.filter((a) => a.pids.includes(el.dataset.id) && a.status === 'Not contacted'), () => insightDrawer(el.dataset.id)),
     setTabLink: (el, e) => { e.preventDefault(); setSetTab(el.dataset.v); navigate('/settings'); },
-    viewStore: (el, e) => { e.preventDefault(); toast(`The storefront is at ${SETTINGS.store.site}. It isn’t part of this admin prototype.`); },
+    // Phase 4 UX polish: "View store" opens the storefront URL from Settings in a new tab.
+    viewStore: (el, e) => {
+      e.preventDefault();
+      const site = SETTINGS.store?.site || '';
+      const href = site ? (site.startsWith('http') ? site : `https://${site}`) : '';
+      if (!href) return toast('Set the storefront URL under Settings → Business → Site.');
+      window.open(href, '_blank', 'noopener');
+    },
     exportExcel: (el) => exportList(routeRef.current, el.dataset.what === 'segment' ? 'customers' : el.dataset.what),
     exportSelected: () => exportList(routeRef.current, null, true),
     invoice: (el) => {
