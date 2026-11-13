@@ -220,8 +220,15 @@ articleDrawer.cover = '';
 /* ---------- PAGE (CMS) ---------- */
 export function pageDrawer(i) {
   const p = PAGES_CMS[i];
+  const bodyLen = (p.body || '').trim().length;
+  const stub = bodyLen < 800;
+  const stubWarn = stub ? `<p class="note n-warn" style="margin-top:0">This page is currently ${bodyLen} characters. Aim for at least 800 characters so it reads as a real policy to customers and search engines.</p>` : '';
+  const isReturns = /return/i.test(p.name);
+  const tokenHelp = isReturns
+    ? '<p class="small muted" style="margin:4px 0 0">You can use <code>{{returnWindow}}</code>, <code>{{returnConditions}}</code> and <code>{{reverseShippingRule}}</code> — they render using the latest Settings so you never have to edit this page when the policy changes.</p>'
+    : '<p class="small muted" style="margin:4px 0 0">Markdown is supported: <b># Heading</b>, <b>**bold**</b>, <b>- list</b>, <b>[link](url)</b>. The storefront renders it as HTML.</p>';
   openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">${esc(p.name)}</h2><p class="small muted" style="margin:4px 0 0">Last updated ${esc(fmtD(p.updated))}</p></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
-    <div class="d-body"><div class="field"><label for="pg-body">Page text</label><textarea class="ctl" id="pg-body" style="min-height:360px">${esc(p.body)}</textarea><span class="hint">${esc(p.desc)}</span></div></div>
+    <div class="d-body">${stubWarn}<div class="field"><label for="pg-body">Page text</label><textarea class="ctl" id="pg-body" style="min-height:420px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px">${esc(p.body)}</textarea><span class="hint">${esc(p.desc)}</span>${tokenHelp}</div></div>
     <div class="d-foot"><button type="button" class="btn btn-pri" data-act="savePage" data-i="${i}">Save page</button></div>`);
 }
 
