@@ -152,7 +152,7 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
   ${listView('products', {
     rows: products, noun: 'product', placeholder: 'Name, weave or SKU', minWidth: 1180, open: 'product',
     text: (p) => `${p.name} ${p.weave} ${p.variants.map((v) => `${v.sku} ${v.colour}`).join(' ')}`,
-    tabs: [{ id: 'all', label: 'All', filter: null }, ...categories.map((c) => ({ id: c.id, label: c.name, filter: (p) => p.cat === c.id })), { id: 'draft', label: 'Drafts', filter: (p) => p.status === 'Draft' }, { id: 'oos', label: 'Colour out of stock', filter: (p) => p.variants.some((v) => v.stock === 0), hot: true }],
+    tabs: [{ id: 'all', label: 'All', filter: null }, ...categories.map((c) => ({ id: c.id, label: c.name, filter: (p) => p.cat === c.id })), { id: 'draft', label: 'Drafts', filter: (p) => p.status === 'Draft' }, { id: 'oos', label: 'Colour out of stock', filter: (p) => p.variants.some((v) => v.stock === 0), hot: true }, { id: 'soldout', label: 'Sold out', filter: (p) => p.status === 'Active' && stockOf(p) === 0, hot: true, note: 'CAT-06: these are live on the store but have zero stock across every colour. The storefront shows them as sold out automatically.' }],
     filters: [
       { id: 'zari', label: 'Any zari', options: ['Pure zari', 'Tested zari', 'No zari'], test: (p, v) => p.zari === v },
       { id: 'occ', label: 'All occasions', options: OCCASIONS, test: (p, v) => p.occasion === v },
@@ -168,7 +168,12 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
       { key: 'price', label: 'Price', sort: true, align: 'r', render: (p) => `<span class="strong">${inr(p.price)}</span>${p.compareAt ? `<span class="sub"><s>${inr(p.compareAt)}</s></span>` : ''}` },
       { key: 'rating', label: 'Reviews', sort: (p) => Number(p.rating), render: (p) => (p.reviews ? `★ ${p.rating}<span class="sub">${plural(p.reviews, 'review')}</span>` : '<span class="faint">None yet</span>') },
       { key: 'created', label: 'Added', sort: true, render: (p) => esc(fmtD(p.created)) },
-      { key: 'status', label: 'Status', sort: true, render: (p) => pill(p.status === 'Active' ? 'Live' : p.status, p.status === 'Active' ? 'ok' : p.status === 'Draft' ? 'warn' : 'neutral', true) },
+      { key: 'status', label: 'Status', sort: true, render: (p) => {
+        // CAT-06: Active + zero stock everywhere = sold out on the store. Shown as
+        // a distinct pill so staff see it at a glance; the underlying status stays Active.
+        if (p.status === 'Active' && stockOf(p) === 0) return pill('Sold out', 'bad', true);
+        return pill(p.status === 'Active' ? 'Live' : p.status, p.status === 'Active' ? 'ok' : p.status === 'Draft' ? 'warn' : 'neutral', true);
+      } },
     ],
   })}`;
 
