@@ -93,7 +93,12 @@ const TODAY = toDate(iso(new Date()));
 const daysFrom = (v) => Math.round((toDate(iso(toDate(v))) - TODAY) / 864e5);
 
 export const stockOf = (p) => p.variants.reduce((a, v) => a + v.stock, 0);
-export const paid = (o) => !['Cancelled', 'Payment pending'].includes(o.status) && o.payment.status !== 'Refunded';
+// Payments received: money actually in the account. Prepaid orders in payment.status 'Paid'
+// and COD orders where cash was collected on delivery. Excludes COD pending, COD not collected
+// (RTO), Pending Razorpay webhooks and Refunded.
+export const paid = (o) => ['Paid', 'COD collected'].includes(o.payment?.status);
+// COD cash sitting with the courier that we expect to receive on delivery.
+export const codToCollect = (o) => o.payment?.status === 'COD pending';
 export const inDays = (o, from, to) => { const d = daysFrom(o.placed); return d <= -from && d > -to; };
 
 export const queue = () => ({
@@ -164,7 +169,9 @@ const refill = (arr, items) => { arr.length = 0; arr.push(...items); };
    after settings/CRM thresholds change. */
 export function computeCRM() {
   customers.forEach((c) => {
-    const os = (c.orders || []).map((id) => ORD[id]).filter((o) => o && o.status !== 'Cancelled' && o.status !== 'Payment pending').sort((a, b) => (a.placed < b.placed ? 1 : -1));
+    // LTV / order count / last order use the same "money received" rule as the dashboard:
+    // only orders with payment.status Paid or COD collected count. See `paid` above (LOGIC-01).
+    const os = (c.orders || []).map((id) => ORD[id]).filter((o) => o && paid(o)).sort((a, b) => (a.placed < b.placed ? 1 : -1));
     c.ltv = os.reduce((a, o) => a + o.total, 0);
     c.orderCount = os.length;
     c.lastOrder = os[0]?.placed || null;

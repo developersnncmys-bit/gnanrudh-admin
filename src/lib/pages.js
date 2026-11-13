@@ -7,7 +7,7 @@ import {
   categories, CAT, COLORS, OCCASIONS, OCCASIONS_FULL, SIZES, products, PROD, stockOf, customers, CUST,
   orders, ORD, jobs, STITCH_STAGES, returns, POLICY, shipLog, COURIERS, coupons,
   reviews, journal, SCENES, PAGES_CMS, SETTINGS, analytics, CRM, STORE_STATE,
-  featured, M_FIELDS, paid, inDays, queue, BORDERS, PRICE_RANGES,
+  featured, M_FIELDS, paid, codToCollect, inDays, queue, BORDERS, PRICE_RANGES,
   pieces, moves, PIECE, PIECE_TONE, piecesOf, varRef,
 } from './data.js';
 import {
@@ -31,6 +31,9 @@ PAGES.dashboard = () => {
   const sum = (from, to) => orders.filter((o) => paid(o) && inDays(o, from, to)).reduce((a, o) => a + o.total, 0);
   const cur = orders.filter((o) => paid(o) && inDays(o, 0, dashRange)), prev = orders.filter((o) => paid(o) && inDays(o, dashRange, dashRange * 2));
   const rev = cur.reduce((a, o) => a + o.total, 0), prevRev = prev.reduce((a, o) => a + o.total, 0);
+  // COD cash still with the courier across all time (not period-scoped — it's a liability counter).
+  const codPending = orders.filter(codToCollect);
+  const codPendingAmt = codPending.reduce((a, o) => a + o.total, 0);
   const delta = (a, b) => { if (!b) return '<span class="faint">—</span>'; const d = ((a - b) / b) * 100; return `<span class="${d >= 0 ? 't-ok' : 't-bad'} strong">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)}%</span>`; };
   const repeatCust = customers.filter((c) => c.orderCount >= 2).length, buyers = customers.filter((c) => c.orderCount >= 1).length;
   const kpi = (l, v, f) => `<div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-val">${v}</div><div class="kpi-foot">${f}</div></div>`;
@@ -51,6 +54,7 @@ PAGES.dashboard = () => {
       <div class="seg" role="group" aria-label="Period">${[[1, 'Today'], [7, '7 days'], [30, '30 days']].map(([v, l]) => `<button type="button" data-act="dashRange" data-v="${v}" aria-pressed="${dashRange === v}">${l}</button>`).join('')}</div></div>
     <div class="kpis">
       ${kpi('Payments received', inrS(rev), `${delta(rev, prevRev)}<span class="faint">vs previous period</span>`)}
+      ${kpi('COD to collect', inrS(codPendingAmt), `<span class="faint">${nf.format(codPending.length)} order${codPending.length === 1 ? '' : 's'} with the courier</span>`)}
       ${kpi('Orders', nf.format(cur.length), `${delta(cur.length, prev.length)}<span class="faint">${cur.filter((o) => o.payment.method === 'Cash on delivery').length} on COD</span>`)}
       ${kpi('Average order', inrS(cur.length ? rev / cur.length : 0), `${delta(cur.length ? rev / cur.length : 0, prev.length ? prevRev / prev.length : 0)}<span></span>`)}
       ${kpi('Visitors on the site now', nf.format(analytics.live), `<span class="faint">Average visit ${analytics.avgSession}</span>`)}
