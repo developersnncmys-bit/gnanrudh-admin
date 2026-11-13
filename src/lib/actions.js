@@ -561,7 +561,13 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     saveArticle: (el) => {
       const mode = el.dataset.mode; const e = document.getElementById('aj-error'); const title = val('aj-title');
       if (!title) { e.textContent = 'Give the article a title.'; e.hidden = false; return; }
-      if (mode === 'Published' && val('aj-body').length < 20) { e.textContent = 'Write the article before publishing.'; e.hidden = false; return; }
+      // CONT-01: the backend blocks Publish without body/cover/SEO. Mirror here so the
+      // user sees the gate inline rather than as a 400 after the round-trip.
+      if (mode === 'Published') {
+        if ((val('aj-body') || '').length < 80) { e.textContent = 'Write at least 80 characters of body before publishing.'; e.hidden = false; return; }
+        if (!articleDrawer.cover) { e.textContent = 'Upload a cover image before publishing.'; e.hidden = false; return; }
+        if ((val('aj-seod') || '').length < 20) { e.textContent = 'Write at least 20 characters of SEO description before publishing.'; e.hidden = false; return; }
+      }
       if (mode === 'Scheduled' && !(val('aj-date') > iso(TODAY))) { e.textContent = 'Pick a future publish date to schedule.'; e.hidden = false; return; }
       const slug = (val('aj-slug') || title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
       const wasNew = !journal.find((x) => x.id === el.dataset.id);
