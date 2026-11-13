@@ -245,6 +245,7 @@ PAGES.occasions = () => {
       <td class="r">
         <button type="button" class="btn btn-sec btn-sm" data-act="newSubOccasion" data-id="${esc(o.name)}">${icon('plus')}Sub-category</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="renameOccasion" data-id="${esc(o.name)}">Rename</button>
+        ${nSubs ? '' : `<button type="button" class="btn btn-ghost btn-sm" data-act="moveOccasion" data-id="${esc(o.name)}">Move under…</button>`}
         <button type="button" class="btn btn-ghost btn-sm" data-act="deleteOccasion" data-id="${esc(o.name)}">Delete</button>
       </td>
     </tr>`;
@@ -262,6 +263,7 @@ PAGES.occasions = () => {
       </div>
       <div class="occ-sub-actions">
         <button type="button" class="btn btn-ghost btn-sm" data-act="renameOccasion" data-id="${esc(o.name)}">Rename</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="moveOccasion" data-id="${esc(o.name)}">Move…</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="deleteOccasion" data-id="${esc(o.name)}">Delete</button>
       </div>
     </div>`;

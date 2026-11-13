@@ -360,6 +360,29 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       renderPage(); toast(`Renamed to ${next}.`);
       sync(api.occasions.rename(current, next), 'rename occasion');
     },
+    moveOccasion: async (el) => {
+      const name = el.dataset.id;
+      const current = OCCASIONS_FULL.find((o) => o.name === name);
+      if (!current) return;
+      // Eligible parents: any top-level occasion that isn't `name` itself.
+      const options = [
+        ['', '— Make top-level —'],
+        ...OCCASIONS_FULL.filter((o) => !o.parent && o.name !== name).map((o) => [o.name, o.name]),
+      ];
+      const v = await ask({
+        title: `Move ${name}`,
+        text: 'Pick a parent occasion to make this a sub-category, or choose top-level to promote it.',
+        ok: 'Move',
+        fields: [{ id: 'p', label: 'New parent', type: 'select', options }],
+      });
+      if (!v) return;
+      const nextParent = (v.p || '').trim() || null;
+      if ((current.parent || null) === nextParent) return;
+      current.parent = nextParent;
+      renderPage();
+      toast(nextParent ? `${name} moved under ${nextParent}.` : `${name} is now top-level.`);
+      sync(api.occasions.reparent(name, nextParent), 'move occasion');
+    },
     deleteOccasion: async (el) => {
       const name = el.dataset.id;
       const used = products.filter((p) => p.occasion === name).length;
