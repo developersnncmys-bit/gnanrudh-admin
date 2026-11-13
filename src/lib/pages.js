@@ -64,7 +64,7 @@ PAGES.dashboard = () => {
       <section class="panel"><div class="panel-head"><div><h2 class="h2">Needs doing</h2><p>Work waiting on the team right now.</p></div></div>
         <ul class="queue" style="margin-top:12px">${items.map(([n, t, d, href, tone]) => `<li><a href="${href}"><span class="count" style="background:${toneBg[tone]}">${n}</span><span class="what"><b>${esc(t)}</b><span>${esc(d)}</span></span><span class="go">Open</span></a></li>`).join('') || '<li class="empty"><strong>All clear</strong></li>'}</ul></section>
       <div class="grid" style="align-content:start">
-        <section class="panel"><div class="panel-head"><h2 class="h2">Payments</h2><a class="link" href="/analytics">Analytics</a></div><div class="panel-body"><dl class="sum"><dt>Today</dt><dd class="strong">${inr(sum(0, 1))}</dd><dt>This week</dt><dd class="strong">${inr(sum(0, 7))}</dd><dt>This month</dt><dd class="strong">${inr(sum(0, 30))}</dd></dl></div></section>
+        <section class="panel"><div class="panel-head"><h2 class="h2">Payments</h2><a class="link" href="/analytics">Analytics</a></div><div class="panel-body"><dl class="sum"><dt>Today</dt><dd class="strong">${inr(sum(0, 1))}</dd><dt>Last 7 days</dt><dd class="strong">${inr(sum(0, 7))}</dd><dt>Last 30 days</dt><dd class="strong">${inr(sum(0, 30))}</dd></dl></div></section>
         <section class="panel"><div class="panel-head"><h2 class="h2">Sales by category, 30 days</h2></div><div class="panel-body">${hbars(categories.map((c) => ({ label: c.name, value: orders.filter((o) => paid(o) && inDays(o, 0, 30)).flatMap((o) => o.items).filter((it) => PROD[it.pid].cat === c.id).reduce((a, it) => a + it.price, 0) })).sort((a, b) => b.value - a.value), { fmt: inrS })}</div></section>
       </div>
     </div>

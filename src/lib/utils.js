@@ -4,18 +4,24 @@ export const $ = (id) => document.getElementById(id);
 export const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 export const pad = (n) => String(n).padStart(2, '0');
-export const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-export const toDate = (v) => (typeof v === 'string' && v.length === 10 ? new Date(`${v}T00:00:00`) : new Date(v));
+// LOGIC-02: all day arithmetic is pinned to Asia/Kolkata so day boundaries don't slide
+// when the browser is in a different timezone.
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+// YYYY-MM-DD for the IST calendar day the given value falls into. Accepts Date, ms, or ISO string.
+export const iso = (d) => new Date(new Date(d).getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+// YYYY-MM-DD strings parse as IST midnight; everything else as-is.
+export const toDate = (v) => (typeof v === 'string' && v.length === 10 ? new Date(`${v}T00:00:00+05:30`) : new Date(v));
 export const TODAY = toDate(iso(new Date()));
-export const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-export const daysFrom = (v) => Math.round((toDate(iso(toDate(v))) - TODAY) / 864e5);
+export const addDays = (d, n) => new Date(new Date(d).getTime() + n * 864e5);
+export const daysFrom = (v) => Math.round((toDate(iso(v)) - TODAY) / 864e5);
 
 export const nf = new Intl.NumberFormat('en-IN');
 export const inrF = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
-export const dF = new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-export const dmF = new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short' });
-export const tF = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit' });
-export const dtF = new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' });
+const IST = { timeZone: 'Asia/Kolkata' };
+export const dF = new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric', ...IST });
+export const dmF = new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', ...IST });
+export const tF = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', ...IST });
+export const dtF = new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', ...IST });
 export const inr = (v) => inrF.format(Math.round(v));
 export const inrS = (v) => (Math.abs(v) >= 1e7 ? `₹${(v / 1e7).toFixed(2)} Cr` : Math.abs(v) >= 1e5 ? `₹${(v / 1e5).toFixed(1)} L` : inr(v));
 export const fmtD = (v) => (v ? dF.format(toDate(v)) : '—');
