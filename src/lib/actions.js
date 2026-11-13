@@ -129,7 +129,12 @@ const val = (id) => { const el = document.getElementById(id); return el ? el.val
 function saveProduct(publish, rerender) {
   readProductForm();
   const p = getDraftP();
-  const err = !p.name ? 'Give the product a name.' : !(p.price > 0) ? 'Enter a price greater than zero.' : publish && !p.images ? 'Add at least one image before publishing.' : publish && (!p.hsn || p.gst === '') ? 'Enter the HSN code and GST rate before publishing, so invoices are correct.' : null;
+  const err = !p.name ? 'Give the product a name.'
+    : !(p.price > 0) ? 'Enter a price greater than zero.'
+    : (p.compareAt !== null && p.compareAt !== '' && !(p.compareAt > p.price)) ? 'Compare-at price must be greater than price.'
+    : publish && !p.images ? 'Add at least one image before publishing.'
+    : publish && (!p.hsn || p.gst === '') ? 'Enter the HSN code and GST rate before publishing, so invoices are correct.'
+    : null;
   if (err) { const e = document.getElementById('pf-error'); e.textContent = err; e.hidden = false; e.scrollIntoView({ block: 'nearest' }); return; }
   if (publish) p.status = 'Active';
   p.hex = p.variants[0].hex;
