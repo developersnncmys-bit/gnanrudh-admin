@@ -4,6 +4,7 @@ import {
   esc, pill, nf, inr, fmtD, dmF, dtF, icon, plural, rel, daysFrom, iso, TODAY, addDays, ov, ol,
   initials, avc, who, code128,
 } from './utils.js';
+import { computeGstRate } from './gst.js';
 import {
   categories, CAT, COLORS, OCCASIONS, SIZES, BORDERS, products, PROD, stockOf, customers, CUST,
   orders, ORD, jobs, STITCH_STAGES, returns, POLICY, shipLog, COURIERS, coupons,
@@ -133,7 +134,17 @@ export function productDrawer(id) {
       <div class="d-sec"><h3>Fabric, care and colour</h3><div class="form-grid">
         ${f('Care instructions', 'pf-care', `<textarea class="ctl" id="pf-care">${esc(p.care)}</textarea>`, '', true)}
         ${f('Colour accuracy note', 'pf-colnote', `<textarea class="ctl" id="pf-colnote">${esc(p.colourNote)}</textarea>`, 'Shown beside the gallery', true)}</div></div>
-      <div class="d-sec"><h3>GST</h3><div class="form-grid">${f('HSN code', 'pf-hsn', inp('pf-hsn', p.hsn))}${f('GST rate, %', 'pf-gst', inp('pf-gst', p.gst), 'Confirm the rate with your accountant')}</div></div>
+      ${(() => {
+        const rec = computeGstRate(p.hsn, p.price);
+        const hasOverride = p.gst !== '' && p.gst != null;
+        const overrideNum = Number(p.gst);
+        const hint = rec != null
+          ? (hasOverride && overrideNum !== rec
+              ? `Recommended ${rec}% from HSN ${esc(p.hsn)} and price. Your override ${overrideNum}% will be used — confirm this is intentional.`
+              : `Recommended ${rec}% from HSN ${esc(p.hsn)} and price (stitched apparel above Rs. 2,500 is 18% since 22 Sep 2025). Leave blank to use the recommendation.`)
+          : 'Confirm the rate with your accountant.';
+        return `<div class="d-sec"><h3>GST</h3><div class="form-grid">${f('HSN code', 'pf-hsn', inp('pf-hsn', p.hsn))}${f('GST rate, %', 'pf-gst', inp('pf-gst', p.gst), hint)}</div></div>`;
+      })()}
       <p class="note n-bad" id="pf-error" role="alert" hidden></p>
     </div>
     <div class="d-foot"><button type="button" class="btn btn-sec" data-act="discardProduct">Discard</button><button type="button" class="btn btn-pri" data-act="publishProduct">Save and update store</button></div>`);

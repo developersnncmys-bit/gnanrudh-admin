@@ -2,6 +2,7 @@
 import { esc, inr, fmtD, iso, TODAY, code128 } from './utils.js';
 import { CUST, PROD, STORE_STATE, SETTINGS, varRef } from './data.js';
 import { variantOf } from './renderers.js';
+import { computeGstRate } from './gst.js';
 
 export const S_ADDR = () => `<b>${esc(SETTINGS.store.name)}</b><br>${esc(SETTINGS.store.address).replace(/\n/g, '<br>')}<br>GSTIN ${esc(SETTINGS.gst.gstin)}`;
 
@@ -64,7 +65,11 @@ export function docInvoice(o, credit = false) {
     const p = PROD[it.pid];
     const v = variantOf(it);
     const gross = it.price * it.qty * scale;
-    const rate = p.gst || 0;
+    // TAX-02: compute rate from HSN + per-unit price. Fall back to the product's
+    // stored gst when HSN isn't recognised; the admin product form warns if the
+    // stored override disagrees with the computed value.
+    const computed = computeGstRate(p.hsn, it.price * scale);
+    const rate = computed != null ? computed : (p.gst || 0);
     const taxable = gross / (1 + rate / 100);
     const tax = gross - taxable;
     return { p, v, qty: it.qty, unit: it.price * scale, taxable, tax, rate, gross };
