@@ -138,6 +138,23 @@ function saveProduct(publish, rerender) {
     : publish && (!p.hsn || p.gst === '') ? 'Enter the HSN code and GST rate before publishing, so invoices are correct.'
     : null;
   if (err) { const e = document.getElementById('pf-error'); e.textContent = err; e.hidden = false; e.scrollIntoView({ block: 'nearest' }); return; }
+  // CAT-01/02/07: soft hygiene warnings — surface via toast so staff can ignore if
+  // intentional, but the first mistake is visible without a round-trip.
+  const warns = [];
+  // CAT-01: colour word in the name must match a variant's colour.
+  const COLOUR_WORDS = ['Red','Maroon','Pink','Rose','Peach','Orange','Mustard','Yellow','Gold','Green','Emerald','Teal','Blue','Peacock','Navy','Purple','Lavender','White','Ivory','Cream','Black','Grey','Beige','Brown','Copper','Silver'];
+  const variantColours = p.variants.map((v) => (v.colour || '').toLowerCase());
+  const nameColours = COLOUR_WORDS.filter((c) => new RegExp(`\\b${c}\\b`, 'i').test(p.name));
+  const mismatched = nameColours.filter((c) => !variantColours.some((vc) => vc.includes(c.toLowerCase())));
+  if (mismatched.length) warns.push(`The name mentions ${mismatched.join(', ')} but no variant uses that colour.`);
+  // CAT-02: duplicate name warning.
+  const dupName = products.find((x) => x.id !== p.id && x.name.trim().toLowerCase() === p.name.trim().toLowerCase());
+  if (dupName) warns.push(`“${p.name}” is already used by ${dupName.id}.`);
+  // CAT-07: price sanity vs category median (for accessories, cap at Rs. 3000 as the brief suggests).
+  const catRange = CAT[p.cat]?.price;
+  if (p.cat === 'acc' && p.price > 3000) warns.push(`Accessory priced at ${inr(p.price)} is above the usual Rs. 3,000 ceiling for this category.`);
+  else if (Array.isArray(catRange) && catRange[1] > 0 && (p.price < catRange[0] || p.price > catRange[1])) warns.push(`Price ${inr(p.price)} falls outside the usual ${inr(catRange[0])}–${inr(catRange[1])} range for ${CAT[p.cat]?.name}.`);
+  if (warns.length) toast(`Saved. Heads up: ${warns.join(' ')}`);
   if (publish) p.status = 'Active';
   p.hex = p.variants[0].hex;
   p.zariHex = p.zari === 'Pure zari' ? '#c9a227' : p.zari === 'Tested zari' ? '#b9a26a' : '#d8cfbf';

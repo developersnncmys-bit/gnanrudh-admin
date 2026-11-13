@@ -186,7 +186,16 @@ export function productDrawer(id) {
               ? `Recommended ${rec}% from HSN ${esc(p.hsn)} and price. Your override ${overrideNum}% will be used — confirm this is intentional.`
               : `Recommended ${rec}% from HSN ${esc(p.hsn)} and price (stitched apparel above Rs. 2,500 is 18% since 22 Sep 2025). Leave blank to use the recommendation.`)
           : 'Confirm the rate with your accountant.';
-        return `<div class="d-sec"><h3>GST</h3><div class="form-grid">${f('HSN code', 'pf-hsn', inp('pf-hsn', p.hsn))}${f('GST rate, %', 'pf-gst', inp('pf-gst', p.gst), hint)}</div></div>`;
+        // CAT-03: HSN suggestions based on fabric. Shown as a hint under the HSN field.
+        const fab = (p.fabric || '').toLowerCase();
+        const sug = fab.includes('silk') ? '5007 (silk fabrics)'
+          : fab.includes('cotton') ? '5208 or 5212 (cotton woven fabrics)'
+          : fab.includes('polyester') || fab.includes('synthetic') ? '5407 (synthetic woven fabrics)'
+          : p.cat === 'lehenga' ? '6204 (women’s suits/ensembles/dresses)'
+          : p.cat === 'acc' ? '7117 (imitation jewellery)'
+          : null;
+        const hsnHint = sug ? `Suggested: ${sug}` : 'Enter the 4- or 8-digit HSN.';
+        return `<div class="d-sec"><h3>GST</h3><div class="form-grid">${f('HSN code', 'pf-hsn', inp('pf-hsn', p.hsn), hsnHint)}${f('GST rate, %', 'pf-gst', inp('pf-gst', p.gst), hint)}</div></div>`;
       })()}
       <p class="note n-bad" id="pf-error" role="alert" hidden></p>
     </div>
