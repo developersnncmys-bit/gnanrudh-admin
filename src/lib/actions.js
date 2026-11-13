@@ -23,6 +23,7 @@ import {
 import { bySku, findOrder, findPiece, beep } from './scanner.js';
 import { setInsTab, setInsCat, abCarts, AB } from './insights.js';
 import { api } from './api.js';
+import { settingsReady } from './validators.js';
 
 /* Fire-and-forget: run an API call in the background, toast on failure. */
 const sync = (promise, label) => Promise.resolve().then(() => promise).catch((err) => toast(`Failed to ${label || 'save'}: ${err.message}`));
@@ -268,10 +269,21 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     viewStore: (el, e) => { e.preventDefault(); toast(`The storefront is at ${SETTINGS.store.site}. It isn’t part of this admin prototype.`); },
     exportExcel: (el) => exportList(routeRef.current, el.dataset.what === 'segment' ? 'customers' : el.dataset.what),
     exportSelected: () => exportList(routeRef.current, null, true),
-    invoice: (el) => { const o = ORD[el.dataset.id]; openDoc(`Tax invoice ${o.invoice}`, docInvoice(o) + (o.creditNote ? docInvoice(o, true) : '')); },
+    invoice: (el) => {
+      const ready = settingsReady(SETTINGS);
+      if (!ready.ok) return toast(`Fix your seller details on Settings first: ${ready.issues[0]}.`);
+      const o = ORD[el.dataset.id];
+      openDoc(`Tax invoice ${o.invoice}`, docInvoice(o) + (o.creditNote ? docInvoice(o, true) : ''));
+    },
     printLabel: (el) => { const o = ORD[el.dataset.id]; openDoc(`Shipping label, ${o.id}`, docLabel(o)); },
     bulkLabels: () => { const list = selectedOrders().filter((o) => o.ship.awb); if (!list.length) return toast('None of the selected orders has a label yet. Labels are generated when an order is pushed to Shiprocket.'); openDoc(`${plural(list.length, 'shipping label')}`, list.map(docLabel).join('')); },
-    bulkInvoices: () => { const list = selectedOrders().filter((o) => o.invoice); if (!list.length) return toast('None of the selected orders has an invoice yet.'); openDoc(`${plural(list.length, 'tax invoice')}`, list.map((o) => docInvoice(o)).join('')); },
+    bulkInvoices: () => {
+      const ready = settingsReady(SETTINGS);
+      if (!ready.ok) return toast(`Fix your seller details on Settings first: ${ready.issues[0]}.`);
+      const list = selectedOrders().filter((o) => o.invoice);
+      if (!list.length) return toast('None of the selected orders has an invoice yet.');
+      openDoc(`${plural(list.length, 'tax invoice')}`, list.map((o) => docInvoice(o)).join(''));
+    },
     printDoc: () => window.print(),
     closeDoc: () => document.getElementById('docDlg').close(),
     checkPayment: (el) => { const o = ORD[el.dataset.id]; o.payment.status = 'Paid'; o.status = 'Label generated'; o.ship.courier = pick(COURIERS); o.ship.awb = `${between(10000000, 99999999)}11`; shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'Order pushed', at: new Date().toISOString(), courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' }); if (!o.invoice) o.invoice = `${SETTINGS.gst.inv}${String(bumpInv()).padStart(4, '0')}`; toast('Razorpay confirmed the payment. Pushed to Shiprocket and a label generated.'); orderDrawer(o.id); renderPage(); renderNav(); sync(api.orders.confirmPayment(o.id).then((srv) => { Object.assign(o, srv); o.id = srv._id || o.id; }), 'confirm payment'); },
