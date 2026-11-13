@@ -74,7 +74,7 @@ PAGES.dashboard = () => {
 
 /* =============== ORDERS =============== */
 PAGES.orders = () => `<div class="page-head"><div><h1 class="h1">Orders</h1><p class="lede">Paid orders are pushed to Shiprocket automatically and a label is generated.</p></div>
-    <button type="button" class="btn btn-sec" data-act="exportExcel" data-what="orders">${icon('dl')}Export to Excel</button></div>
+    <button type="button" class="btn btn-sec" data-act="exportExcel" data-what="orders">${icon('dl')}Export CSV</button></div>
   ${listView('orders', {
     rows: orders, noun: 'order', placeholder: 'Order number, customer, city, AWB or payment ID', minWidth: 1180, open: 'order',
     text: (o) => `${o.id} ${CUST[o.cid].name} ${CUST[o.cid].city} ${o.ship.awb || ''} ${o.payment.rzp || ''}`,
@@ -91,7 +91,7 @@ PAGES.orders = () => `<div class="page-head"><div><h1 class="h1">Orders</h1><p c
       { id: 'pay', label: 'All payments', options: ['Paid', 'Pending', 'COD pending', 'COD collected', 'Refunded'], test: (o, v) => o.payment.status === v },
       { id: 'cat', label: 'All categories', options: categories.map((c) => [c.id, c.name]), test: (o, v) => o.items.some((it) => PROD[it.pid].cat === v) },
     ],
-    bulk: [['bulkLabels', 'Print labels'], ['bulkInvoices', 'Download tax invoices'], ['exportSelected', 'Export to Excel']],
+    bulk: [['bulkLabels', 'Print labels'], ['bulkInvoices', 'Download tax invoices'], ['exportSelected', 'Export CSV']],
     sort: { key: 'placed', dir: 'desc' },
     columns: [
       { key: 'placed', label: 'Order', sort: true, render: (o) => `<b>${o.id}</b><span class="sub">${esc(dtF.format(new Date(o.placed)))}</span>` },
@@ -154,7 +154,7 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
       { id: 'occ', label: 'All occasions', options: OCCASIONS, test: (p, v) => p.occasion === v },
       { id: 'blouse', label: 'Blouse piece', options: [['y', 'Included'], ['n', 'Not included']], test: (p, v) => (v === 'y') === p.blousePiece },
     ],
-    bulk: [['bulkStatus', 'Change status'], ['bulkFeature', 'Feature on homepage'], ['exportSelected', 'Export to Excel']],
+    bulk: [['bulkStatus', 'Change status'], ['bulkFeature', 'Feature on homepage'], ['exportSelected', 'Export CSV']],
     sort: { key: 'created', dir: 'desc' },
     columns: [
       { key: 'name', label: 'Product', sort: true, render: (p) => prodCell(p) },
@@ -310,7 +310,7 @@ PAGES.customers = () => `<div class="page-head"><div><h1 class="h1">Customers</h
       { id: 'occ', label: 'Any occasion', options: OCCASIONS, test: (c, v) => c.occasions.includes(v) },
       { id: 'city', label: 'All cities', options: [...new Set(customers.map((c) => c.city))].sort(), test: (c, v) => c.city === v },
     ],
-    bulk: [['exportSelected', 'Export to Excel'], ['bulkNote', 'Add note']],
+    bulk: [['exportSelected', 'Export CSV'], ['bulkNote', 'Add note']],
     sort: { key: 'ltv', dir: 'desc' },
     columns: [
       { key: 'name', label: 'Customer', sort: true, render: (c) => who(c.name, `${c.city}, ${c.phone}`) },
@@ -515,7 +515,7 @@ INS_VIEW.products = () => listView('insights', {
   text: (x) => `${PROD[x.id].name} ${PROD[x.id].weave}`,
   tabs: [{ id: 'all', label: 'All', filter: null }, ...Object.keys(VERDICT).filter((v) => v !== 'Steady').map((v) => ({ id: v, label: v, filter: (x) => x.verdict === v, note: VERDICT[v][1], hot: ['Carted, not bought', 'Return risk'].includes(v) }))],
   filters: [{ id: 'cat', label: 'All categories', options: categories.map((c) => [c.id, c.name]), test: (x, v) => PROD[x.id].cat === v }],
-  tools: `<button type="button" class="btn btn-sec btn-sm" data-act="exportExcel" data-what="insights">${icon('dl')}Export to Excel</button>`,
+  tools: `<button type="button" class="btn btn-sec btn-sm" data-act="exportExcel" data-what="insights">${icon('dl')}Export CSV</button>`,
   sort: { key: 'revenue', dir: 'desc' },
   columns: [
     { key: 'name', label: 'Product', sort: (x) => PROD[x.id].name, render: (x) => prodCell(PROD[x.id], `, ${inr(PROD[x.id].price)}`) },

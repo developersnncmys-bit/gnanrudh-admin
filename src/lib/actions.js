@@ -94,7 +94,14 @@ export function choosePalette(i, navigate) {
 
 /* ---------- CSV export ---------- */
 export function downloadCSV(name, rows) {
-  const csv = rows.map((r) => r.map((v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }).join(',')).join('\r\n');
+  const escape = (v) => {
+    let s = String(v ?? '');
+    // Prefix a single quote on anything Excel/Sheets would treat as a formula.
+    // Covers = + - @ plus Tab and CR, which some spreadsheet parsers also act on.
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\n\r\t]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = rows.map((r) => r.map(escape).join(',')).join('\r\n');
   try {
     const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: name });
