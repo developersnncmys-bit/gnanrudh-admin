@@ -344,13 +344,13 @@ PAGES.customers = () => `<div class="page-head"><div><h1 class="h1">Customers</h
 /* =============== REVIEWS =============== */
 PAGES.reviews = () => `<div class="page-head"><div><h1 class="h1">Reviews</h1><p class="lede">Reviews publish on the store only after you approve them. Replies appear under the review.</p></div></div>
   ${listView('reviews', {
-    rows: reviews, noun: 'review', placeholder: 'Product, customer or text', minWidth: 980, text: (r) => `${PROD[r.pid].name} ${CUST[r.cid].name} ${r.text}`,
-    tabs: [{ id: 'pending', label: 'To approve', filter: (r) => r.status === 'Pending', hot: true }, { id: 'pub', label: 'Published', filter: (r) => r.status === 'Published' }, { id: 'rej', label: 'Rejected', filter: (r) => r.status === 'Rejected' }],
+    rows: reviews, noun: 'review', placeholder: 'Product, customer or text', minWidth: 980, text: (r) => `${PROD[r.pid]?.name || ''} ${CUST[r.cid]?.name || ''} ${r.text}`,
+    tabs: [{ id: 'pending', label: 'To approve', filter: (r) => r.status === 'Pending', hot: true }, { id: 'pub', label: 'Published', filter: (r) => r.status === 'Published' }, { id: 'rej', label: 'Rejected', filter: (r) => r.status === 'Rejected' }, { id: 'unverified', label: 'Unverified', filter: (r) => r.verified !== true, note: 'DATA-03: reviews not linked to a delivered order line. Legacy rows from before the verified-buyer rule.' }],
     bulk: [['approveReviews', 'Approve', 'btn-pri'], ['rejectReviews', 'Reject', 'btn-bad']],
     columns: [
-      { key: 'rating', label: 'Rating', sort: true, render: (r) => `<span class="${r.rating >= 4 ? 't-ok' : r.rating === 3 ? 't-warn' : 't-bad'} strong">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</span>` },
-      { key: 'text', label: 'Review', wrap: true, render: (r) => `${esc(r.text)}<span class="sub">${esc(CUST[r.cid].name)}, ${esc(cap(rel(daysFrom(r.at))))}</span>${r.reply ? `<span class="sub t-pri">Your reply: ${esc(r.reply)}</span>` : ''}` },
-      { key: 'p', label: 'Product', render: (r) => prodCell(PROD[r.pid]) },
+      { key: 'rating', label: 'Rating', sort: true, render: (r) => `<span class="${r.rating >= 4 ? 't-ok' : r.rating === 3 ? 't-warn' : 't-bad'} strong">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</span>${r.verified ? '<span class="pill p-ok" style="margin-left:6px" title="This customer bought the product on a delivered order">Verified buyer</span>' : '<span class="pill p-warn" style="margin-left:6px" title="No linked delivered order">Unverified</span>'}` },
+      { key: 'text', label: 'Review', wrap: true, render: (r) => `${esc(r.text)}<span class="sub">${esc(CUST[r.cid]?.name || `Customer ${r.cid} (removed)`)}, ${esc(cap(rel(daysFrom(r.at))))}</span>${r.reply ? `<span class="sub t-pri">Your reply: ${esc(r.reply)}</span>` : ''}` },
+      { key: 'p', label: 'Product', render: (r) => PROD[r.pid] ? prodCell(PROD[r.pid]) : `<span class="faint">Product ${esc(r.pid)} (removed)</span>` },
       { key: 'act', label: '', render: (r) => (r.status === 'Pending' ? `<div style="display:inline-flex;gap:6px"><button type="button" class="btn btn-ghost btn-sm" data-act="rejectReview" data-id="${r.id}">Reject</button><button type="button" class="btn btn-sec btn-sm" data-act="replyReview" data-id="${r.id}">Reply</button><button type="button" class="btn btn-pri btn-sm" data-act="approveReview" data-id="${r.id}">Approve</button></div>` : `<button type="button" class="btn btn-ghost btn-sm" data-act="replyReview" data-id="${r.id}">${r.reply ? 'Edit reply' : 'Reply'}</button>`) },
     ],
   })}`;
