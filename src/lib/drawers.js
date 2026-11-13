@@ -105,7 +105,7 @@ export function readProductForm() {
   set('name', 'pf-name'); set('weave', 'pf-weave'); set('price', 'pf-price', (v) => (v === '' ? '' : Number(v.replace(/[^\d.]/g, '')))); set('compareAt', 'pf-compare', (v) => (v === '' ? null : Number(v.replace(/[^\d.]/g, ''))));
   set('occasion', 'pf-occ'); set('status', 'pf-status'); set('fabric', 'pf-fabric'); set('zari', 'pf-zari'); set('border', 'pf-border'); set('blousePiece', 'pf-blouse', (v) => v === 'yes');
   set('length', 'pf-length'); set('width', 'pf-width'); set('modelHeight', 'pf-model'); set('drapeStyle', 'pf-drape'); set('care', 'pf-care'); set('colourNote', 'pf-colnote'); set('hsn', 'pf-hsn'); set('gst', 'pf-gst', (v) => (v === '' ? '' : Number(v)));
-  document.querySelectorAll('[data-vstock]').forEach((el) => { p.variants[el.dataset.vstock].stock = Math.max(0, parseInt(el.value, 10) || 0); });
+  // INV-02: stock is derived from pieces now, never typed in the form. No data-vstock read.
 }
 export function productDrawer(id) {
   let scroll = 0;
@@ -134,8 +134,9 @@ export function productDrawer(id) {
         ${f('Occasion', 'pf-occ', sel('pf-occ', OCCASIONS, p.occasion), 'Used for filters and CRM occasion tagging')}
         ${f('Status', 'pf-status', sel('pf-status', [['Active', 'Live'], 'Draft', 'Hidden'], p.status))}</div></div>
       <div class="d-sec"><h3>Colour variants and stock <button type="button" class="btn btn-sec btn-sm" data-act="addVariant">${icon('plus')}Add colour</button></h3>
-        <table class="t"><thead><tr><th><span style="padding-left:0">Colour</span></th>${c.sized ? '<th><span>Size</span></th>' : ''}<th><span>SKU</span></th><th class="r"><span>Stock</span></th><th></th></tr></thead><tbody>
-        ${p.variants.map((v, i) => `<tr><td style="padding-left:0"><span class="who">${swv(v, p)}<span>${esc(v.colour)}</span></span></td>${c.sized ? `<td>${esc(v.size || '—')}</td>` : ''}<td class="muted">${esc(v.sku || 'Assigned on save')}</td><td class="r"><input class="ctl" style="width:70px;text-align:right" value="${v.stock}" data-vstock="${i}" inputmode="numeric" aria-label="Stock for ${esc(v.colour)}"></td><td class="r" style="padding-right:0">${p.variants.length > 1 ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeVariant" data-i="${i}" aria-label="Remove ${esc(v.colour)}">${icon('x', 14)}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+        <p class="small muted" style="margin:-2px 0 10px">Stock is read-only here. Every piece is barcoded; add stock through <b>Receive stock</b> on each row.</p>
+        <table class="t"><thead><tr><th><span style="padding-left:0">Colour</span></th>${c.sized ? '<th><span>Size</span></th>' : ''}<th><span>SKU</span></th><th class="r"><span>In stock</span></th><th></th></tr></thead><tbody>
+        ${p.variants.map((v, i) => `<tr><td style="padding-left:0"><span class="who">${swv(v, p)}<span>${esc(v.colour)}</span></span></td>${c.sized ? `<td>${esc(v.size || '—')}</td>` : ''}<td class="muted">${esc(v.sku || 'Assigned on save')}</td><td class="r"><span class="strong">${nf.format(v.stock || 0)}</span></td><td class="r" style="padding-right:0"><button type="button" class="btn btn-sec btn-sm" data-act="receiveStock" data-i="${i}" ${v.sku ? '' : 'disabled title="Save the product first to assign a SKU"'}>Receive stock</button>${p.variants.length > 1 ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeVariant" data-i="${i}" aria-label="Remove ${esc(v.colour)}">${icon('x', 14)}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
       ${c.saree ? `<div class="d-sec"><h3>Weave and zari panel</h3><div class="form-grid">
         ${f('Fabric', 'pf-fabric', inp('pf-fabric', p.fabric))}${f('Zari', 'pf-zari', sel('pf-zari', ['Pure zari', 'Tested zari', 'No zari'], p.zari || 'No zari'))}
         ${f('Border', 'pf-border', sel('pf-border', BORDERS, p.border || 'No border'))}${f('Blouse piece', 'pf-blouse', sel('pf-blouse', [['yes', 'Included, offer stitching'], ['no', 'Not included']], p.blousePiece ? 'yes' : 'no'), 'Stitching is offered at checkout only when included')}

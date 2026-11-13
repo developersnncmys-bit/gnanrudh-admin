@@ -156,15 +156,15 @@ function saveProduct(publish, rerender) {
   PROD[p.id].variants.forEach((v, i) => { if (!v.sku) v.sku = `${p.cat.slice(0, 3).toUpperCase()}-${p.id.slice(1)}${i}`; });
   closeDrawer(); rerender();
   toast(publish ? `“${p.name}” is live on the store.` : `“${p.name}” saved${p.status === 'Active' ? ' and updated on the store' : ' as a draft'}.`);
-  const payload = { ...p }; delete payload.id;
+  // INV-02: strip variant.stock from the payload so the client can't dictate stock.
+  // Stock is derived from pieces; the backend treats the field as read-only.
+  const payload = { ...p };
+  delete payload.id;
+  payload.variants = p.variants.map((v) => { const { stock, ...rest } = v; return rest; });
   const saveCall = wasNew ? api.products.create({ _id: p.id, ...payload }) : api.products.update(p.id, payload);
-  // After save, reconcile pieces to match the typed per-variant stock counts:
-  // the backend spawns missing pieces (with fresh labels to print) or writes off
-  // extras. Keeps the Products page stock and the Barcodes page piece count in sync.
   // On failure, roll back the optimistic insert so the ghost row doesn't linger.
   saveCall
-    .then(() => api.pieces.reconcile(p.id))
-    .then(() => Promise.all([refresh('pieces'), refresh('movements'), refresh('products')]))
+    .then(() => Promise.all([refresh('products')]))
     .then(() => rerender())
     .catch((err) => {
       if (wasNew) {
@@ -317,6 +317,35 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       productDrawer('__redraw');
     },
     removeVariant: (el) => { readProductForm(); getDraftP().variants.splice(Number(el.dataset.i), 1); productDrawer('__redraw'); },
+    // INV-02: new stock enters only through this flow. Creates pieces (one barcode per unit)
+    // via /api/pieces/receive. Admin does not type stock numbers anywhere.
+    receiveStock: async (el) => {
+      readProductForm();
+      const dp = getDraftP();
+      const i = Number(el.dataset.i);
+      const v = dp.variants[i];
+      if (!v?.sku) return toast('Save the product first so the SKU exists.');
+      const answer = await ask({
+        title: `Receive stock — ${v.colour}${v.size ? `, size ${v.size}` : ''}`,
+        text: `Creates N new ${v.sku} pieces with fresh barcodes. Print them from the Barcodes page.`,
+        ok: 'Receive',
+        fields: [
+          { id: 'q', label: 'Units received', value: '1', required: true },
+          { id: 'n', label: 'Note', value: 'Received from the weaver' },
+        ],
+      });
+      if (!answer) return;
+      const qty = Math.max(0, parseInt(answer.q, 10) || 0);
+      if (!qty) return toast('Enter a positive quantity.');
+      try {
+        await api.pieces.receive({ pid: dp.id, vid: v.id, qty, note: answer.n });
+        await Promise.all([refresh('pieces'), refresh('movements'), refresh('products')]);
+        productDrawer('__redraw');
+        toast(`Received ${plural(qty, 'piece')} of ${v.colour}.`);
+      } catch (err) {
+        toast(`Failed to receive stock: ${err.message}`);
+      }
+    },
     removeImage: (el) => { readProductForm(); const dp = getDraftP(); const i = Number(el.dataset.i); dp.imageUrls.splice(i, 1); dp.images -= 1; productDrawer('__redraw'); },
     removeVideo: () => { readProductForm(); const dp = getDraftP(); dp.video = false; dp.videoName = ''; productDrawer('__redraw'); },
     bulkStatus: async () => { const ids = lvSelected('products'); const v = await ask({ title: `Change status of ${plural(ids.length, 'product')}`, ok: 'Apply', fields: [{ id: 's', label: 'Status', type: 'select', options: [['Active', 'Live'], 'Draft', 'Hidden'] }] }); if (!v) return; ids.forEach((id) => { PROD[id].status = v.s; }); LV.products.sel.clear(); toast(`${plural(ids.length, 'product')} set to ${v.s === 'Active' ? 'live' : v.s.toLowerCase()}.`); rerender(); sync(api.products.bulkStatus(ids, v.s), 'update product statuses'); },
