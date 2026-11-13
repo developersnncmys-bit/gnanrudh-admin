@@ -36,6 +36,9 @@ async function request(path, { method = 'GET', body, query } = {}) {
     notifyExpired();
     throw new Error('Session expired. Please sign in again.');
   }
+  // SEC-03: pick up a freshly-rotated token when the server was about to expire ours.
+  const refreshed = res.headers.get('X-Refreshed-Token');
+  if (refreshed) auth.set(refreshed);
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try { const j = await res.json(); if (j.error) msg = j.error; } catch { /* non-JSON */ }
