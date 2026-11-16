@@ -408,7 +408,7 @@ PAGES.analytics = () => {
   const notConnected = '<div class="panel-body"><p class="note n-neutral" style="margin:0">Connect an analytics provider on <a class="link" href="/settings#analytics">Settings → Analytics</a> to populate this panel.</p></div>';
   const topProducts = products.filter((p) => p.status === 'Active').sort((a, b) => b.views - a.views).slice(0, 6);
   return `<div class="page-head"><div><h1 class="h1">Analytics</h1><p class="lede">Payments from Razorpay, and visitor behaviour from the analytics tool. Visitor numbers miss people who decline tracking or use ad blockers.</p></div></div>
-    ${analytics.connected ? '' : '<p class="note n-warn" style="margin:12px 0">No analytics provider connected. Payments/categories/cities below come from real orders; visitor funnel, sources, abandoned carts and cohorts are blank. <a class="link" href="/settings#analytics">Connect analytics</a> to populate them.</p>'}
+    ${/* analytics.connected ? '' : '<p class="note n-warn" style="margin:12px 0">No analytics provider connected. Payments/categories/cities below come from real orders; visitor funnel, sources, abandoned carts and cohorts are blank. <a class="link" href="/settings#analytics">Connect analytics</a> to populate them.</p>' */ ''}
     <div class="kpis">
       <div class="kpi"><div class="kpi-label">Payments today</div><div class="kpi-val">${inrS(sum((o) => inDays(o, 0, 1)))}</div></div>
       <div class="kpi"><div class="kpi-label">This week</div><div class="kpi-val">${inrS(sum((o) => inDays(o, 0, 7)))}</div></div>
@@ -464,7 +464,7 @@ PAGES.productAnalytics = () => {
   const totalRev = Object.values(revenueByPid).reduce((a, b) => a + b, 0);
   const emptyList = (msg) => `<li class="empty"><strong>${esc(msg)}</strong></li>`;
   return `<div class="page-head"><div><h1 class="h1">Product analytics</h1><p class="lede">What’s selling, what’s being looked at, and where interest turns into orders. Sold counts are from paid orders; views come from storefront analytics.</p></div></div>
-    ${analytics.connected ? '' : '<p class="note n-warn" style="margin:12px 0">No analytics provider connected. Sold counts and revenue are real; views and conversion rates are placeholders. <a class="link" href="/settings#analytics">Connect analytics</a> to see actual numbers.</p>'}
+    ${/* analytics.connected ? '' : '<p class="note n-warn" style="margin:12px 0">No analytics provider connected. Sold counts and revenue are real; views and conversion rates are placeholders. <a class="link" href="/settings#analytics">Connect analytics</a> to see actual numbers.</p>' */ ''}
     <div class="kpis">
       <div class="kpi"><div class="kpi-label">Top-selling product</div><div class="kpi-val" style="font-size:1.05rem;line-height:1.3">${topProduct ? esc(topProduct.name) : '—'}</div><div class="kpi-foot"><span class="faint">${topProduct ? `${plural(topProduct.sold, 'unit')} · ${inrS(topProduct.revenue)}` : 'No sales yet'}</span></div></div>
       <div class="kpi"><div class="kpi-label">Most visited category</div><div class="kpi-val" style="font-size:1.05rem;line-height:1.3">${topCategory && topCategory.views ? esc(topCategory.name) : '—'}</div><div class="kpi-foot"><span class="faint">${topCategory && topCategory.views ? `${nf.format(topCategory.views)} views` : 'No views tracked'}</span></div></div>
