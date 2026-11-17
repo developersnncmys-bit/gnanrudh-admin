@@ -7,7 +7,12 @@ export default function Sidebar({ route, open }) {
   return (
     <aside className={`side${open ? ' open' : ''}`} id="side" aria-label="Main navigation">
       <div className="brand">
-        <span className="brand-mark" aria-hidden="true" />
+        <img
+          className="brand-mark"
+          src="/images/gnanrudh-light-logo.jpeg"
+          alt=""
+          aria-hidden="true"
+        />
         <span>
           <span className="brand-name" id="brandName">{SETTINGS.store.name}</span><br />
           <span className="brand-sub">Admin</span>

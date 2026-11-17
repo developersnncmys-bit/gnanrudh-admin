@@ -30,7 +30,7 @@ a { color: var(--pri); }
 .shell { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); min-height: 100vh; }
 .side { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: #042509; color: #d9d5de; padding: 16px 12px 24px; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
-.brand-mark { width: 34px; height: 34px; border-radius: 8px; background: linear-gradient(var(--pri) 0 64%, #E0AE6D 64% 76%, var(--pri) 76%); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+.brand-mark { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; display: block; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
 .brand-name { font-weight: 700; color: #fff; font-size: 15px; letter-spacing: -0.01em; }
 .brand-sub { font-size: var(--fs-xs); color: #a39eab; }
 .nav-group { margin-top: 14px; }
