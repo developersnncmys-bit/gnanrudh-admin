@@ -14,6 +14,7 @@ import { ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, LV, 
 import {
   closeDrawer, orderDrawer, returnDrawer, productDrawer, categoryDrawer, customerDrawer, articleDrawer, pageDrawer, featuredDrawer,
   getDraftP, readProductForm, insightDrawer, cartDrawer, openEntity,
+  newOrderDrawer, getDraftO, resetDraftO,
 } from './drawers.js';
 import { openDoc, docInvoice, docLabel, labelHTML, docPackSlip } from './docs.js';
 import {
@@ -300,6 +301,22 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const o = ORD[el.dataset.id];
       openDoc(`Tax invoice ${o.invoice}`, docInvoice(o) + (o.creditNote ? docInvoice(o, true) : ''));
     },
+    generateInvoice: async (el) => {
+      const id = el.dataset.id;
+      const o = ORD[id]; if (!o) return;
+      if (o.invoice) return toast(`Invoice ${o.invoice} already issued.`);
+      if (!['Paid', 'COD collected'].includes(o.payment.status)) return toast('Invoice can only be generated for Paid or COD collected orders.');
+      try {
+        const srv = await api.orders.generateInvoice(id);
+        Object.assign(o, srv);
+        o.id = srv._id || o.id;
+        toast(o.invoice ? `Invoice ${o.invoice} issued.` : 'Invoice generation returned no number.');
+        orderDrawer(o.id);
+        renderPage();
+      } catch (e) {
+        toast(`Failed to generate invoice: ${e.message}`);
+      }
+    },
     printLabel: (el) => { const o = ORD[el.dataset.id]; openDoc(`Shipping label, ${o.id}`, docLabel(o)); },
     bulkLabels: () => { const list = selectedOrders().filter((o) => o.ship.awb); if (!list.length) return toast('None of the selected orders has a label yet. Labels are generated when an order is pushed to Shiprocket.'); openDoc(`${plural(list.length, 'shipping label')}`, list.map(docLabel).join('')); },
     bulkInvoices: () => {
@@ -323,6 +340,105 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     refundReturn: (el) => { const r = returns.find((x) => x.id === el.dataset.id); r.status = 'Refunded'; const o = ORD[r.oid]; o.creditNote = `${SETTINGS.gst.cn}${String(bumpCn()).padStart(4, '0')}`; o.payment.status = 'Refunded'; const v = variantOf(o.items.find((it) => it.pid === r.pid)); v.stock += 1; toast(`Refunded through Razorpay. Credit note ${o.creditNote} generated; ${v.colour} stock back to ${v.stock}.`); returnDrawer(r.id); renderPage(); renderNav(); sync(api.returns.refund(r.id), 'refund return'); },
     rejectReturn: async (el) => { const v = await ask({ title: 'Reject return', text: 'She is told the reason by email.', ok: 'Reject', danger: true, fields: [{ id: 'r', label: 'Reason', type: 'area', required: true }] }); if (!v) return; const id = el.dataset.id; returns.find((x) => x.id === id).status = 'Rejected'; toast('Return rejected.'); returnDrawer(id); renderPage(); renderNav(); sync(api.returns.reject(id), 'reject return'); },
     syncNow: (el) => { const id = el.dataset.id; const s = shipLog.find((x) => x.id === id); if (s) s.webhook = 'Received'; toast('Latest status pulled from Shiprocket.'); renderPage(); renderNav(); sync(api.shipping.sync(id), 'sync shipping event'); },
+    newOrder: () => { resetDraftO(); newOrderDrawer(); },
+    addOrderLine: () => {
+      const d = getDraftO(); if (!d) return;
+      const first = products.find((p) => p.status !== 'Hidden') || products[0];
+      if (!first) return toast('No products in the catalogue yet.');
+      d.items.push({ pid: first.id, vid: first.variants[0]?.id || '', qty: 1, price: first.price, stitch: null });
+      newOrderDrawer('__redraw');
+    },
+    removeOrderLine: (el) => {
+      const d = getDraftO(); if (!d) return;
+      d.items.splice(Number(el.dataset.i), 1);
+      newOrderDrawer('__redraw');
+    },
+    saveManualOrder: async () => {
+      const d = getDraftO(); if (!d) return;
+      const err = document.getElementById('no-error');
+      const fail = (msg) => { if (err) { err.textContent = msg; err.hidden = false; } toast(msg); };
+      if (!d.cid || !CUST[d.cid]) return fail('Pick a customer first.');
+      if (!d.items.length) return fail('Add at least one item.');
+      for (let i = 0; i < d.items.length; i += 1) {
+        const it = d.items[i];
+        const p = PROD[it.pid]; if (!p) return fail(`Line ${i + 1}: pick a product.`);
+        if (!it.vid || !p.variants.find((v) => v.id === it.vid)) return fail(`Line ${i + 1}: pick a variant.`);
+        if (!(Number(it.qty) >= 1)) return fail(`Line ${i + 1}: quantity must be at least 1.`);
+        if (!(Number(it.price) >= 0)) return fail(`Line ${i + 1}: unit price must be zero or more.`);
+      }
+      if (d.pin && !/^\d{6}$/.test(d.pin)) return fail('Pincode must be 6 digits.');
+
+      const sub = d.items.reduce((a, it) => a + Number(it.price) * Number(it.qty), 0);
+      const discount = Math.max(0, Number(d.discount) || 0);
+      const shipping = Math.max(0, Number(d.shipping) || 0);
+      const total = Math.max(0, sub - discount + shipping);
+
+      const c = CUST[d.cid];
+      const pin = d.pin || (c.pinPrefix ? `${c.pinPrefix}00` : '');
+      const weight = d.items.reduce((a, it) => a + (CAT[PROD[it.pid].cat]?.weight || 0) * Number(it.qty), 0) + (SETTINGS.ship?.packaging || 120);
+      const slab = `${Math.ceil(weight / 500) * 0.5} kg`;
+      const rate = 60 + Math.ceil(weight / 500) * 38;
+
+      const nextNum = orders.reduce((m, o) => {
+        const n = Number(String(o.id).replace(/\D/g, ''));
+        return Number.isFinite(n) && n > m ? n : m;
+      }, 10400) + 1;
+      const id = `GR${nextNum}`;
+
+      const placed = new Date();
+      const promisedIso = new Date(placed.getTime() + 2 * 864e5).toISOString().slice(0, 10);
+
+      const doc = {
+        _id: id,
+        placed: placed.toISOString(),
+        cid: d.cid,
+        items: d.items.map((it) => ({ pid: it.pid, vid: it.vid, qty: Number(it.qty) || 1, price: Number(it.price) || 0, stitch: null })),
+        sub,
+        coupon: d.coupon ? d.coupon.trim() : null,
+        discount,
+        shipping,
+        total,
+        payment: { method: d.payment.method, status: d.payment.status, rzp: d.payment.rzp ? d.payment.rzp.trim() : null },
+        status: d.status,
+        invoice: null,
+        creditNote: null,
+        ship: { courier: null, awb: null, weight, slab, rate, pin, etd: promisedIso },
+        ndr: null,
+        source: d.source || 'Manual entry',
+        promised: promisedIso,
+        deliveredAt: null,
+      };
+
+      try {
+        const saved = await api.orders.create(doc);
+        const row = { ...saved, id: saved._id || id };
+        orders.unshift(row);
+        ORD[row.id] = row;
+        if (c) {
+          c.orders = c.orders || [];
+          if (!c.orders.includes(row.id)) c.orders.push(row.id);
+        }
+        computeCRM();
+        let invoiceMsg = '';
+        if (d.generateInvoice) {
+          try {
+            const withInv = await api.orders.generateInvoice(row.id);
+            Object.assign(row, withInv);
+            row.id = withInv._id || row.id;
+            invoiceMsg = row.invoice ? ` Invoice ${row.invoice} issued.` : '';
+          } catch (ivErr) {
+            invoiceMsg = ` Order created, but invoice could not be issued: ${ivErr.message}`;
+          }
+        }
+        resetDraftO();
+        closeDrawer();
+        toast(`Order ${row.id} created.${invoiceMsg}`);
+        renderPage();
+        renderNav();
+      } catch (e) {
+        fail(`Failed to create order: ${e.message}`);
+      }
+    },
     newProduct: () => productDrawer('new'),
     saveProduct: () => saveProduct(false, rerender),
     publishProduct: () => saveProduct(true, rerender),

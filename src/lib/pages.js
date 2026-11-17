@@ -80,7 +80,7 @@ PAGES.dashboard = () => {
 
 /* =============== ORDERS =============== */
 PAGES.orders = () => `<div class="page-head"><div><h1 class="h1">Orders</h1><p class="lede">Paid orders are pushed to Shiprocket automatically and a label is generated.</p></div>
-    <button type="button" class="btn btn-sec" data-act="exportExcel" data-what="orders">${icon('dl')}Export CSV</button></div>
+    <div style="display:flex;gap:8px"><button type="button" class="btn btn-sec" data-act="exportExcel" data-what="orders">${icon('dl')}Export CSV</button><button type="button" class="btn btn-pri" data-act="newOrder">${icon('plus')}New order</button></div></div>
   ${listView('orders', {
     rows: orders, noun: 'order', placeholder: 'Order number, customer, city, AWB or payment ID', minWidth: 1180, open: 'order',
     text: (o) => `${o.id} ${CUST[o.cid].name} ${CUST[o.cid].city} ${o.ship.awb || ''} ${o.payment.rzp || ''}`,
@@ -819,6 +819,71 @@ BC_VIEW.setup = () => {
 const varRefLocal = (vid) => {
   for (const p of products) { const v = p.variants.find((x) => x.id === vid); if (v) return { p, v }; }
   return null;
+};
+
+/* =============== INVENTORY =============== */
+// Aggregated stock view across every variant: in stock + reserved + sold 30d +
+// stock value. Source of truth is the `pieces` collection (barcoded units) —
+// matches what the Labels page uses for "In stock", so numbers never diverge.
+const LOW_STOCK = 2;
+
+const inventoryRows = () => products.flatMap((p) => p.variants.map((v) => {
+  const ps = piecesOf(v.id);
+  const inStock = ps.filter((u) => u.status === 'In stock').length;
+  const reserved = ps.filter((u) => ['Reserved', 'Packed'].includes(u.status)).length;
+  const sold30 = ps.filter((u) => u.status === 'Shipped' && daysFrom(u.at) >= -30).length;
+  const value = inStock * (Number(p.price) || 0);
+  const health = inStock === 0 ? 'out' : inStock <= LOW_STOCK ? 'low' : 'ok';
+  // listView uses `r.id` to build data-open="product:<id>" on the row. The
+  // product drawer only knows how to open a product id — not a variant id — so
+  // use the product id here. The variant stays on `r.v` for the columns.
+  return { id: p.id, p, v, inStock, reserved, sold30, value, health };
+}));
+
+PAGES.inventory = () => {
+  const rows = inventoryRows();
+  const totalValue = rows.reduce((a, r) => a + r.value, 0);
+  const totalUnits = rows.reduce((a, r) => a + r.inStock, 0);
+  const lowCount = rows.filter((r) => r.health === 'low').length;
+  const outCount = rows.filter((r) => r.health === 'out').length;
+  return `<div class="page-head"><div><h1 class="h1">Inventory</h1><p class="lede">Live stock across every colour variant, aggregated from the barcoded pieces. Low and out-of-stock variants are flagged so the store never shows a product it can’t ship.</p></div></div>
+    <div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:16px">
+      <div class="kpi"><div class="kpi-label">Units in stock</div><div class="kpi-val">${nf.format(totalUnits)}</div><div class="kpi-foot"><span class="faint">${plural(rows.length, 'variant')}</span></div></div>
+      <div class="kpi"><div class="kpi-label">Stock value</div><div class="kpi-val">${inrS(totalValue)}</div><div class="kpi-foot"><span class="faint">at current MRP</span></div></div>
+      <div class="kpi"><div class="kpi-label">Low stock</div><div class="kpi-val ${lowCount ? 't-warn' : ''}">${nf.format(lowCount)}</div><div class="kpi-foot"><span class="faint">1 to ${LOW_STOCK} in stock</span></div></div>
+      <div class="kpi"><div class="kpi-label">Sold out</div><div class="kpi-val ${outCount ? 't-bad' : ''}">${nf.format(outCount)}</div><div class="kpi-foot"><span class="faint">live on the store but no pieces</span></div></div>
+    </div>
+    ${listView('inventory', {
+      rows, noun: 'variant', placeholder: 'Product, colour or SKU', minWidth: 1180, open: 'product',
+      text: (r) => `${r.p.name} ${r.v.colour} ${r.v.sku || ''}`,
+      tabs: [
+        { id: 'all', label: 'All', filter: null },
+        { id: 'in', label: 'In stock', filter: (r) => r.health === 'ok' },
+        { id: 'low', label: 'Low stock', filter: (r) => r.health === 'low', hot: true, note: `Variants with 1 to ${LOW_STOCK} pieces left. Receive new stock before they sell out on the store.` },
+        { id: 'oos', label: 'Out of stock', filter: (r) => r.health === 'out', hot: true, note: 'No pieces in stock. These colours are shown as sold out on the storefront.' },
+      ],
+      filters: [
+        { id: 'cat', label: 'All categories', options: categories.map((c) => [c.id, c.name]), test: (r, v) => r.p.cat === v },
+        { id: 'status', label: 'All product statuses', options: [['Active', 'Live'], 'Draft', 'Hidden'], test: (r, v) => r.p.status === v },
+      ],
+      sort: { key: 'inStock', dir: 'asc' },
+      columns: [
+        { key: 'name', label: 'Product', sort: (r) => r.p.name, render: (r) => prodCell(r.p, '', r.v) },
+        { key: 'colour', label: 'Colour and SKU', sort: (r) => r.v.colour, render: (r) => `<span style="display:inline-flex;align-items:center;gap:10px">${swv(r.v, r.p)}<span>${esc(r.v.colour)}${r.v.size ? `, ${r.v.size}` : ''}<span class="sub">${esc(r.v.sku || 'No SKU yet')}</span></span></span>` },
+        { key: 'inStock', label: 'In stock', sort: true, align: 'r', render: (r) => (r.inStock ? `<span class="strong">${nf.format(r.inStock)}</span>` : '<span class="t-bad strong">0</span>') },
+        { key: 'reserved', label: 'Reserved', sort: true, align: 'r', render: (r) => (r.reserved ? nf.format(r.reserved) : '<span class="faint">—</span>') },
+        { key: 'sold30', label: 'Sold, 30 days', sort: true, align: 'r', render: (r) => (r.sold30 ? nf.format(r.sold30) : '<span class="faint">—</span>') },
+        { key: 'value', label: 'Stock value', sort: true, align: 'r', render: (r) => (r.inStock ? `<span class="strong">${inr(r.value)}</span><span class="sub">${inr(r.p.price)} each</span>` : '<span class="faint">—</span>') },
+        { key: 'health', label: 'Status', sort: true, render: (r) => r.health === 'out' ? pill('Sold out', 'bad', true) : r.health === 'low' ? pill(`Low, ${r.inStock} left`, 'warn', true) : pill('In stock', 'ok', true) },
+        { key: 'act', label: '', align: 'r', render: (r) => {
+          // Restock only shows when the variant actually needs it — healthy
+          // in-stock rows stay uncluttered.
+          if (r.health === 'ok') return '';
+          if (!r.v.sku) return `<button type="button" class="btn btn-sec btn-sm" disabled title="Save the product once to assign a SKU before pieces can be received">Restock</button>`;
+          return `<button type="button" class="btn btn-sec btn-sm" data-act="stockIn" data-id="${esc(r.v.id)}">${icon('plus')}Restock</button>`;
+        } },
+      ],
+    })}`;
 };
 
 PAGES.barcodes = () => `<div class="page-head"><div><h1 class="h1">Barcodes and stock</h1><p class="lede">Every piece carries a Code 128 label. The barcode holds the piece code; the label prints its weave, colour, size and price. Scan any label, anywhere in the admin, to open it.</p></div></div>

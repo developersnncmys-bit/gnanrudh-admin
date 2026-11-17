@@ -6,7 +6,7 @@ import {
 } from './utils.js';
 import { computeGstRate } from './gst.js';
 import {
-  categories, CAT, COLORS, OCCASIONS, SIZES, BORDERS, products, PROD, stockOf, customers, CUST,
+  categories, CAT, COLORS, OCCASIONS, OCCASIONS_FULL, SIZES, BORDERS, products, PROD, stockOf, customers, CUST,
   orders, ORD, jobs, STITCH_STAGES, returns, POLICY, shipLog, COURIERS, coupons,
   reviews, journal, SCENES, PAGES_CMS, SETTINGS, M_FIELDS, featured, setFeatured,
   pieces, PIECE, PIECE_TONE, moves, varRef,
@@ -80,8 +80,197 @@ export function orderDrawer(id) {
         <dl class="kv"><dt>Weight slab</dt><dd>${esc(o.ship.slab)} (${nf.format(o.ship.weight)} g packed)</dd><dt>Rate charged by Shiprocket</dt><dd>${inr(o.ship.rate)}</dd>${o.ship.awb ? `<dt>Courier</dt><dd>${esc(o.ship.courier)}, AWB ${o.ship.awb}</dd><dt>Estimated delivery</dt><dd>${fmtD(o.ship.etd)}, as reported by the courier</dd>` : `<dt>Pushed</dt><dd>${o.status === 'Payment pending' ? 'Not yet. Waiting for payment.' : '—'}</dd>`}</dl>
         ${events.length ? `<ol class="timeline" style="margin-top:12px">${events.map((e) => `<li class="${['NDR raised', 'RTO initiated'].includes(e.type) ? 'bad' : 'done'}">${esc(e.type)}${e.detail ? `: ${esc(e.detail)}` : ''}<span class="sub">${esc(dtF.format(new Date(e.at)))}</span></li>`).join('')}</ol>` : ''}</div>
     </div>
-    <div class="d-foot"><button type="button" class="btn btn-ghost" data-act="invoice" data-id="${o.id}" style="margin-right:auto"${o.invoice ? '' : ' disabled'}>${icon('dl')}Tax invoice</button>${actions.map(([a, l, cls]) => `<button type="button" class="btn ${cls}" data-act="${a}" data-id="${o.id}">${esc(l)}</button>`).join('')}</div>`);
+    <div class="d-foot">${o.invoice
+      ? `<button type="button" class="btn btn-ghost" data-act="invoice" data-id="${o.id}" style="margin-right:auto">${icon('dl')}Tax invoice</button>`
+      : (['Paid', 'COD collected'].includes(o.payment.status)
+          ? `<button type="button" class="btn btn-sec" data-act="generateInvoice" data-id="${o.id}" style="margin-right:auto">${icon('plus')}Generate tax invoice</button>`
+          : `<button type="button" class="btn btn-ghost" data-act="invoice" data-id="${o.id}" style="margin-right:auto" disabled>${icon('dl')}Tax invoice</button>`)
+    }${actions.map(([a, l, cls]) => `<button type="button" class="btn ${cls}" data-act="${a}" data-id="${o.id}">${esc(l)}</button>`).join('')}</div>`);
 }
+
+/* ---------- NEW MANUAL ORDER ---------- */
+// Admin-entered order — bypasses the storefront checkout. Lets staff record
+// phone/WhatsApp/in-person sales with existing customers and catalogue items.
+const PAY_METHODS = ['UPI', 'Card', 'Netbanking', 'Wallet', 'EMI', 'Cash on delivery', 'Bank transfer', 'Cash'];
+const PAY_STATUSES = ['Paid', 'Pending', 'COD pending', 'COD collected'];
+const ORDER_STATUSES = ['Payment pending', 'Label generated', 'In transit', 'Delivered'];
+const ORDER_SOURCES = ['Manual entry', 'Phone', 'WhatsApp', 'Walk-in', 'Instagram'];
+
+function blankOrderDraft() {
+  const c = customers[0];
+  return {
+    cid: c?.id || '',
+    items: [],
+    coupon: '',
+    discount: 0,
+    shipping: 0,
+    pin: c ? (c.pinPrefix ? `${c.pinPrefix}00` : '') : '',
+    source: 'Manual entry',
+    status: 'Payment pending',
+    payment: { method: 'UPI', status: 'Pending', rzp: '' },
+    generateInvoice: false,
+  };
+}
+
+const paidLike = (status) => status === 'Paid' || status === 'COD collected';
+
+export let draftO = null;
+export const getDraftO = () => draftO;
+export const resetDraftO = () => { draftO = null; };
+
+function orderTotals(d) {
+  const sub = d.items.reduce((a, it) => a + (Number(it.price) || 0) * (Number(it.qty) || 1), 0);
+  const discount = Math.max(0, Number(d.discount) || 0);
+  const shipping = Math.max(0, Number(d.shipping) || 0);
+  const total = Math.max(0, sub - discount + shipping);
+  return { sub, discount, shipping, total };
+}
+
+function orderWeight(d) {
+  return d.items.reduce((a, it) => {
+    const p = PROD[it.pid];
+    const w = p && CAT[p.cat] ? CAT[p.cat].weight : 0;
+    return a + w * (Number(it.qty) || 1);
+  }, 0) + (d.items.length ? (SETTINGS.ship?.packaging || 120) : 0);
+}
+
+function recalcOrderTotals() {
+  const d = draftO; if (!d) return;
+  const { sub, discount, shipping, total } = orderTotals(d);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('no-sub', inr(sub));
+  set('no-disc', `− ${inr(discount)}`);
+  set('no-ship', shipping ? inr(shipping) : 'Free');
+  set('no-total', inr(total));
+}
+
+export function newOrderDrawer(mode) {
+  if (mode !== '__redraw' || !draftO) draftO = blankOrderDraft();
+  const d = draftO;
+  const t = orderTotals(d);
+  const weight = orderWeight(d);
+
+  const custOpts = customers
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((c) => `<option value="${esc(c.id)}"${c.id === d.cid ? ' selected' : ''}>${esc(c.name)} — ${esc(c.phone || c.email || c.city || c.id)}</option>`)
+    .join('');
+
+  const prodOpts = (pid) => products
+    .filter((p) => p.status !== 'Hidden')
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((p) => `<option value="${esc(p.id)}"${p.id === pid ? ' selected' : ''}>${esc(p.name)} — ${esc(CAT[p.cat]?.name || '')}</option>`)
+    .join('');
+
+  const variantOpts = (pid, vid) => {
+    const p = PROD[pid]; if (!p) return '';
+    return p.variants.map((v) => `<option value="${esc(v.id)}"${v.id === vid ? ' selected' : ''}>${esc(v.colour)}${v.size ? `, size ${v.size}` : ''}${v.sku ? ` (${esc(v.sku)})` : ''} — ${nf.format(v.stock || 0)} in stock</option>`).join('');
+  };
+
+  const itemRow = (it, i) => {
+    const p = PROD[it.pid];
+    const lineTotal = (Number(it.price) || 0) * (Number(it.qty) || 1);
+    return `<tr>
+      <td><select class="ctl" data-no-pid data-i="${i}">${!it.pid ? '<option value="">— Choose product —</option>' : ''}${prodOpts(it.pid)}</select></td>
+      <td><select class="ctl" data-no-vid data-i="${i}"${p ? '' : ' disabled'}>${variantOpts(it.pid, it.vid)}</select></td>
+      <td><input class="ctl" type="number" min="1" step="1" style="width:72px" value="${esc(it.qty)}" data-no-qty data-i="${i}"></td>
+      <td><input class="ctl" type="number" min="0" step="1" style="width:120px" value="${esc(it.price)}" data-no-price data-i="${i}"></td>
+      <td class="r"><span class="strong">${inr(lineTotal)}</span></td>
+      <td class="r" style="padding-right:0"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeOrderLine" data-i="${i}" aria-label="Remove line ${i + 1}">${icon('x', 14)}</button></td>
+    </tr>`;
+  };
+
+  const sel = (id, opts, v, extra = '') => `<select class="ctl" id="${id}"${extra}>${opts.map((o) => `<option value="${esc(ov(o))}"${String(ov(o)) === String(v) ? ' selected' : ''}>${esc(ol(o))}</option>`).join('')}</select>`;
+
+  openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">New order</h2><p class="small muted" style="margin:4px 0 0">Manually record an order from phone, WhatsApp or walk-in. The customer must already exist.</p></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
+    <div class="d-body">
+      ${customers.length ? '' : '<p class="note n-warn">No customers in the system yet. Add a customer before creating an order.</p>'}
+      <div class="d-sec"><h3>Customer and delivery</h3><div class="form-grid">
+        <div class="field span2"><label for="no-cust">Customer</label>${customers.length ? `<select class="ctl" id="no-cust">${custOpts}</select>` : '<input class="ctl" id="no-cust" disabled value="No customers available">'}</div>
+        <div class="field"><label for="no-pin">Delivery pincode</label><input class="ctl" id="no-pin" inputmode="numeric" maxlength="6" value="${esc(d.pin)}" placeholder="6 digits"></div>
+        <div class="field"><label for="no-src">Source</label>${sel('no-src', ORDER_SOURCES, d.source)}</div>
+      </div></div>
+      <div class="d-sec"><h3>Items <button type="button" class="btn btn-sec btn-sm" data-act="addOrderLine"${products.length ? '' : ' disabled'}>${icon('plus')}Add item</button></h3>
+        ${d.items.length ? `<div class="scroll" style="border:1px solid var(--line);border-radius:var(--r-md)"><table class="t"><thead><tr><th><span style="padding-left:0">Product</span></th><th><span>Variant</span></th><th><span>Qty</span></th><th><span>Unit price, ₹</span></th><th class="r"><span>Line total</span></th><th></th></tr></thead><tbody>${d.items.map(itemRow).join('')}</tbody></table></div>` : '<p class="small muted" style="margin:0">No items yet. Click “Add item” to start.</p>'}
+      </div>
+      <div class="d-sec"><h3>Payment</h3><div class="form-grid">
+        <div class="field"><label for="no-method">Method</label>${sel('no-method', PAY_METHODS, d.payment.method)}</div>
+        <div class="field"><label for="no-paystatus">Status</label>${sel('no-paystatus', PAY_STATUSES, d.payment.status)}</div>
+        <div class="field span2"><label for="no-rzp">Razorpay payment ID (optional)</label><input class="ctl" id="no-rzp" value="${esc(d.payment.rzp)}" placeholder="pay_XXXXXXXXXXXX"></div>
+        <div class="field"><label for="no-status">Order status</label>${sel('no-status', ORDER_STATUSES, d.status)}</div>
+        <div class="field"><label for="no-coupon">Coupon code (optional)</label><input class="ctl" id="no-coupon" value="${esc(d.coupon)}"></div>
+        <div class="field"><label for="no-discount">Discount, ₹</label><input class="ctl" id="no-discount" type="number" min="0" step="1" value="${esc(d.discount)}"></div>
+        <div class="field"><label for="no-shipping">Shipping fee, ₹</label><input class="ctl" id="no-shipping" type="number" min="0" step="1" value="${esc(d.shipping)}"></div>
+        <div class="field span2"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="no-invoice" ${d.generateInvoice ? 'checked' : ''} ${paidLike(d.payment.status) ? '' : 'disabled'}><span>Generate tax invoice now${paidLike(d.payment.status) ? '' : ' <span class="faint">(only for Paid or COD collected)</span>'}</span></label><span class="hint">Assigns the next invoice number from your GST series. Requires seller details to be filled in on Settings.</span></div>
+      </div></div>
+      <div class="d-sec"><h3>Summary</h3><dl class="sum">
+        <dt>Subtotal</dt><dd id="no-sub">${inr(t.sub)}</dd>
+        <dt>Discount</dt><dd id="no-disc">− ${inr(t.discount)}</dd>
+        <dt>Shipping</dt><dd id="no-ship">${t.shipping ? inr(t.shipping) : 'Free'}</dd>
+        <dt class="tot">Total, incl. GST</dt><dd class="tot" id="no-total">${inr(t.total)}</dd>
+        <dt>Estimated packed weight</dt><dd>${nf.format(weight)} g</dd>
+      </dl></div>
+      <p class="note n-bad" id="no-error" role="alert" hidden></p>
+    </div>
+    <div class="d-foot"><button type="button" class="btn btn-sec" data-act="closeDrawer">Cancel</button><button type="button" class="btn btn-pri" data-act="saveManualOrder">${icon('plus')}Create order</button></div>`);
+
+  const root = document.getElementById('drawer');
+
+  const cust = document.getElementById('no-cust');
+  if (cust) cust.onchange = () => { d.cid = cust.value; const c = CUST[cust.value]; if (c?.pinPrefix && !d.pin) { d.pin = `${c.pinPrefix}00`; const pinEl = document.getElementById('no-pin'); if (pinEl) pinEl.value = d.pin; } };
+
+  const bindText = (id, path) => {
+    const el = document.getElementById(id); if (!el) return;
+    el.oninput = () => {
+      if (path === 'discount' || path === 'shipping') { d[path] = Number(el.value) || 0; recalcOrderTotals(); }
+      else if (path.startsWith('payment.')) { d.payment[path.slice(8)] = el.value; }
+      else d[path] = el.value;
+    };
+    el.onchange = el.oninput;
+  };
+  bindText('no-pin', 'pin');
+  bindText('no-src', 'source');
+  bindText('no-status', 'status');
+  bindText('no-coupon', 'coupon');
+  bindText('no-discount', 'discount');
+  bindText('no-shipping', 'shipping');
+  bindText('no-method', 'payment.method');
+  bindText('no-rzp', 'payment.rzp');
+
+  const payStatus = document.getElementById('no-paystatus');
+  if (payStatus) payStatus.onchange = () => {
+    d.payment.status = payStatus.value;
+    // Default the invoice checkbox on when flipping to a paid-like status, off otherwise.
+    d.generateInvoice = paidLike(d.payment.status);
+    newOrderDrawer('__redraw');
+  };
+
+  const invChk = document.getElementById('no-invoice');
+  if (invChk) invChk.onchange = () => { d.generateInvoice = invChk.checked; };
+
+  // Live-bind the per-line inputs. Product change triggers a redraw (variant list changes).
+  root.querySelectorAll('[data-no-pid]').forEach((el) => {
+    el.onchange = () => {
+      const i = Number(el.dataset.i);
+      const p = PROD[el.value];
+      d.items[i].pid = el.value;
+      d.items[i].vid = p?.variants[0]?.id || '';
+      d.items[i].price = p?.price ?? d.items[i].price ?? 0;
+      newOrderDrawer('__redraw');
+    };
+  });
+  root.querySelectorAll('[data-no-vid]').forEach((el) => {
+    el.onchange = () => { d.items[Number(el.dataset.i)].vid = el.value; };
+  });
+  root.querySelectorAll('[data-no-qty]').forEach((el) => {
+    el.oninput = () => { d.items[Number(el.dataset.i)].qty = Math.max(1, parseInt(el.value, 10) || 1); recalcOrderTotals(); };
+  });
+  root.querySelectorAll('[data-no-price]').forEach((el) => {
+    el.oninput = () => { d.items[Number(el.dataset.i)].price = Math.max(0, Number(el.value) || 0); recalcOrderTotals(); };
+  });
+}
+newOrderDrawer.recalc = recalcOrderTotals;
 
 /* ---------- RETURN ---------- */
 export function returnDrawer(id) {
@@ -160,9 +349,71 @@ export function productDrawer(id) {
         ${f('Price, ₹, incl. GST', 'pf-price', inp('pf-price', p.price))}${f('Compare-at price, ₹', 'pf-compare', inp('pf-compare', p.compareAt || '', 'Optional'))}
         ${(() => {
           // CAT-04: at least one occasion must be picked. Multi-select checkbox group.
+          // Top-level occasions are rendered as cards with their sub-categories
+          // nested inside, so the hierarchy is visible at a glance.
           const picked = new Set((p.occasions && p.occasions.length ? p.occasions : (p.occasion ? [p.occasion] : [])));
-          const chips = OCCASIONS.map((o) => `<label style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);cursor:pointer"><input type="checkbox" name="pf-occ" value="${esc(o)}"${picked.has(o) ? ' checked' : ''} style="margin:0"><span>${esc(o)}</span></label>`).join('');
-          return f('Occasions', 'pf-occ', `<div id="pf-occ" style="display:flex;flex-wrap:wrap;gap:8px">${chips}</div>`, 'At least one required. Multiple allowed.', true);
+          const tops = OCCASIONS_FULL.filter((o) => !o.parent).slice().sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name));
+          const subsOf = (name) => OCCASIONS_FULL.filter((o) => o.parent === name).slice().sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name));
+          // Occasions on the product that no longer map to any known top-level or
+          // sub-occasion — render them under an "Other" bucket so nothing silently drops.
+          const known = new Set(OCCASIONS_FULL.map((o) => o.name));
+          const orphans = [...picked].filter((n) => !known.has(n));
+
+          // The whole picker uses :has(input:checked) so the active state updates
+          // live as the user toggles checkboxes — no JS rebind needed.
+          const styles = `
+            <style>
+              #pf-occ { --occ-radius: 12px; }
+              #pf-occ .occ-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+              #pf-occ .occ-card { position: relative; padding: 10px; border: 1px solid var(--line); border-radius: var(--occ-radius); background: var(--surface); display: flex; flex-direction: column; gap: 8px; transition: border-color 160ms, background 160ms, box-shadow 160ms, transform 160ms; }
+              #pf-occ .occ-card:hover { border-color: var(--line-2); box-shadow: 0 2px 6px rgba(0,0,0,.04); }
+              #pf-occ .occ-card:has(.occ-parent input:checked) { border-color: var(--pri); background: linear-gradient(180deg, var(--pri-tint) 0%, var(--surface) 70%); box-shadow: 0 2px 8px rgba(5,56,13,.08); }
+              #pf-occ .occ-card:has(.occ-parent input:checked)::before { content: ''; position: absolute; top: 10px; left: 0; width: 3px; height: calc(100% - 20px); background: var(--pri); border-radius: 0 3px 3px 0; }
+
+              /* Hide the native checkbox but keep it accessible — the whole pill is the hit area. */
+              #pf-occ .occ-pill input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+              #pf-occ .occ-pill { position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px 7px 11px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line-2); color: var(--ink-2); cursor: pointer; user-select: none; font-size: var(--fs-sm); font-weight: 600; transition: background 140ms, border-color 140ms, color 140ms, transform 80ms; }
+              #pf-occ .occ-pill::before { content: ''; width: 14px; height: 14px; border: 1.5px solid var(--line-2); border-radius: 50%; background: var(--surface); flex-shrink: 0; transition: background 140ms, border-color 140ms; }
+              #pf-occ .occ-pill:hover { border-color: var(--ink-3); color: var(--ink); }
+              #pf-occ .occ-pill:has(input:checked) { background: var(--pri); border-color: var(--pri); color: var(--on-pri); }
+              #pf-occ .occ-pill:has(input:checked)::before { background: var(--on-pri); border-color: var(--on-pri); box-shadow: inset 0 0 0 3.5px var(--pri); }
+              #pf-occ .occ-pill:active { transform: scale(.97); }
+              #pf-occ .occ-pill input:focus-visible + span { outline: 2px solid var(--pri); outline-offset: 4px; border-radius: 4px; }
+
+              #pf-occ .occ-parent { align-self: flex-start; padding: 8px 15px 8px 12px; font-size: var(--fs-md); font-weight: 700; }
+              #pf-occ .occ-parent::before { width: 15px; height: 15px; border-width: 2px; }
+
+              #pf-occ .occ-subs { display: flex; flex-wrap: wrap; gap: 5px; padding-left: 4px; }
+              #pf-occ .occ-sub { padding: 4px 10px 4px 8px; font-size: var(--fs-xs); font-weight: 500; }
+              #pf-occ .occ-sub::before { width: 11px; height: 11px; border-width: 1.5px; }
+              #pf-occ .occ-sub:has(input:checked)::before { box-shadow: inset 0 0 0 2.5px var(--pri); }
+
+              #pf-occ .occ-empty { font-size: var(--fs-xs); color: var(--ink-3); padding-left: 4px; font-style: italic; }
+              #pf-occ .occ-legacy { grid-column: 1 / -1; border-style: dashed; }
+              #pf-occ .occ-legacy-label { font-size: var(--fs-xs); font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: .04em; }
+            </style>`;
+
+          const pill = (name, cls) => `<label class="occ-pill ${cls}"><input type="checkbox" name="pf-occ" value="${esc(name)}"${picked.has(name) ? ' checked' : ''}><span>${esc(name)}</span></label>`;
+
+          let body;
+          if (!tops.length) {
+            // OCCASIONS_FULL hasn't been populated yet (older backend / fresh install) —
+            // fall back to a flat chip strip so the field is still usable.
+            body = `<div class="occ-card"><div style="display:flex;flex-wrap:wrap;gap:6px">${OCCASIONS.map((o) => pill(o, 'occ-parent')).join('')}</div></div>`;
+          } else {
+            const cards = tops.map((t) => {
+              const subs = subsOf(t.name);
+              const subsHtml = subs.length
+                ? `<div class="occ-subs">${subs.map((s) => pill(s.name, 'occ-sub')).join('')}</div>`
+                : `<div class="occ-empty">No sub-categories</div>`;
+              return `<div class="occ-card">${pill(t.name, 'occ-parent')}${subsHtml}</div>`;
+            }).join('');
+            const orphansHtml = orphans.length
+              ? `<div class="occ-card occ-legacy"><span class="occ-legacy-label">Legacy occasions</span><div style="display:flex;flex-wrap:wrap;gap:6px">${orphans.map((n) => pill(n, 'occ-sub')).join('')}</div></div>`
+              : '';
+            body = `<div class="occ-grid">${cards}${orphansHtml}</div>`;
+          }
+          return f('Occasions', 'pf-occ', `<div id="pf-occ">${styles}${body}</div>`, 'Pick the top-level occasion plus any matching sub-category. Multiple allowed.', true);
         })()}
         ${f('Status', 'pf-status', sel('pf-status', [['Active', 'Live'], 'Draft', 'Hidden'], p.status))}</div></div>
       <div class="d-sec"><h3>Colour variants and stock <button type="button" class="btn btn-sec btn-sm" data-act="addVariant">${icon('plus')}Add colour</button></h3>

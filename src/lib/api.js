@@ -41,7 +41,13 @@ async function request(path, { method = 'GET', body, query } = {}) {
   if (refreshed) auth.set(refreshed);
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
-    try { const j = await res.json(); if (j.error) msg = j.error; } catch { /* non-JSON */ }
+    try {
+      const j = await res.json();
+      if (j.error) msg = j.error;
+      // Routes like /orders/:id/invoice return an `issues` array listing every
+      // Settings field that failed `settingsReady`. Surface them so the toast is actionable.
+      if (Array.isArray(j.issues) && j.issues.length) msg += ` — ${j.issues.join('; ')}`;
+    } catch { /* non-JSON */ }
     throw new Error(msg);
   }
   if (res.status === 204) return null;
@@ -79,7 +85,13 @@ async function uploadFiles(files) {
   if (res.status === 401) { auth.clear(); notifyExpired(); throw new Error('Session expired.'); }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
-    try { const j = await res.json(); if (j.error) msg = j.error; } catch { /* non-JSON */ }
+    try {
+      const j = await res.json();
+      if (j.error) msg = j.error;
+      // Routes like /orders/:id/invoice return an `issues` array listing every
+      // Settings field that failed `settingsReady`. Surface them so the toast is actionable.
+      if (Array.isArray(j.issues) && j.issues.length) msg += ` — ${j.issues.join('; ')}`;
+    } catch { /* non-JSON */ }
     throw new Error(msg);
   }
   return res.json(); // { files: [{ url, filename, name, size, type }] }
@@ -138,7 +150,9 @@ export const api = {
   orders: {
     list: () => list('/orders'),
     get: (id) => get(`/orders/${id}`),
+    create: (doc) => post('/orders', doc),
     update: (id, p) => patch(`/orders/${id}`, p),
+    generateInvoice: (id) => post(`/orders/${id}/invoice`),
     confirmPayment: (id) => post(`/orders/${id}/confirm-payment`),
     cancel: (id) => post(`/orders/${id}/cancel`),
     ship: (id) => post(`/orders/${id}/ship`),

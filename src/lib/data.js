@@ -124,7 +124,7 @@ export const notifications = [
 export const NAV = [
   ['Overview', [['dashboard', 'Dashboard', 'dash'], ['analytics', 'Analytics', 'analytics'], ['insights', 'Product insights', 'insights']]],
   ['Sales', [['orders', 'Orders', 'orders', (q) => q.pending + q.ndr, true], ['packing', 'Packing', 'pack', (q) => q.ready], ['returns', 'Returns', 'returns', (q) => q.retReview + q.retRefund], ['shipping', 'Shipping', 'ship', (q) => q.webhook]]],
-  ['Catalogue', [['products', 'Products', 'products'], ['categories', 'Categories', 'category'], ['occasions', 'Occasions', 'marketing'], ['priceRanges', 'Shop by price', 'coupon'], ['barcodes', 'Barcodes and stock', 'barcode']]],
+  ['Catalogue', [['products', 'Products', 'products'], ['categories', 'Categories', 'category'], ['occasions', 'Occasions', 'marketing'], ['priceRanges', 'Shop by price', 'coupon'], ['inventory', 'Inventory', 'inventory', (q) => q.oos, true], ['barcodes', 'Barcodes and stock', 'barcode']]],
   ['Customers', [['customers', 'Customers', 'customers'], ['reviews', 'Reviews', 'reviews', (q) => q.reviews]]],
   ['Content and offers', [['coupons', 'Coupons', 'coupon'], ['journal', 'Journal', 'journal'], ['storefront', 'Storefront pages', 'page']]],
   ['Admin', [['settings', 'Settings', 'settings']]],
