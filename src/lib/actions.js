@@ -7,7 +7,7 @@ import {
   categories, CAT, COLORS, OCCASIONS, OCCASIONS_FULL, SIZES, products, PROD, customers, CUST,
   orders, ORD, jobs, STITCH_STAGES, returns, POLICY, shipLog, COURIERS, coupons,
   reviews, journal, SCENES, PAGES_CMS, SETTINGS, CRM, featured, setFeatured,
-  bumpInv, bumpCn, computeCRM, PRICE_RANGES,
+  bumpInv, bumpCn, computeCRM, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS,
   pieces, PIECE, varRef, refresh,
 } from './data.js';
 import { ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, LV, lvSelected } from './renderers.js';
@@ -52,8 +52,14 @@ export function ask({ title, text = '', ok, danger, fields = [], preview }) {
     const initial = (f.value || '#1f5f7a').toLowerCase();
     return `<div class="color-pick"><input type="color" id="f-${f.id}" value="${esc(initial)}"><output class="color-hex" id="f-${f.id}-hex" for="f-${f.id}">${esc(initial.toUpperCase())}</output></div>`;
   };
-  document.getElementById('dlgFields').innerHTML = fields.map((f) => `<div class="field" style="margin-top:14px"><label for="f-${f.id}">${esc(f.label)}</label>${f.type === 'color' ? colorHtml(f) : f.type === 'select' ? `<select class="ctl" id="f-${f.id}">${f.options.map((o) => `<option value="${esc(ov(o))}">${esc(ol(o))}</option>`).join('')}</select>` : f.type === 'area' ? `<textarea class="ctl" id="f-${f.id}" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>` : `<input class="ctl" id="f-${f.id}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`).join('');
-  const vals = () => Object.fromEntries(fields.map((f) => [f.id, document.getElementById(`f-${f.id}`).value]));
+  document.getElementById('dlgFields').innerHTML = fields.map((f) => `<div class="field" style="margin-top:14px"><label for="f-${f.id}">${esc(f.label)}</label>${f.type === 'color' ? colorHtml(f) : f.type === 'select' ? `<select class="ctl" id="f-${f.id}">${f.options.map((o) => `<option value="${esc(ov(o))}">${esc(ol(o))}</option>`).join('')}</select>` : f.type === 'area' ? `<textarea class="ctl" id="f-${f.id}" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>` : f.type === 'file' ? `<input type="file" class="ctl" id="f-${f.id}" accept="${esc(f.accept || 'image/*')}">` : `<input class="ctl" id="f-${f.id}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`).join('');
+  // File fields return the picked File object (or null) instead of their
+  // `.value` string — which is a bogus `C:\fakepath\…` path in browsers.
+  const vals = () => Object.fromEntries(fields.map((f) => {
+    const el = document.getElementById(`f-${f.id}`);
+    if (f.type === 'file') return [f.id, el.files && el.files[0] ? el.files[0] : null];
+    return [f.id, el.value];
+  }));
   const runPreview = () => { document.getElementById('dlgPreview').innerHTML = preview ? `<div style="margin-top:14px">${preview(vals())}</div>` : ''; };
   fields.filter((f) => f.type === 'color').forEach((f) => {
     const input = document.getElementById(`f-${f.id}`);
@@ -65,7 +71,18 @@ export function ask({ title, text = '', ok, danger, fields = [], preview }) {
   (fields[0] ? document.getElementById(`f-${fields[0].id}`) : okBtn).focus();
   return new Promise((res) => {
     const done = (v) => { cleanup(); if (dlg.open) dlg.close(); res(v); };
-    const okH = () => { const v = vals(); const miss = fields.find((f) => f.required && !v[f.id].trim()); if (miss) { document.getElementById(`f-${miss.id}`).setAttribute('aria-invalid', 'true'); document.getElementById(`f-${miss.id}`).focus(); return; } done(fields.length ? v : true); };
+    const okH = () => {
+      const v = vals();
+      // `required` checks differ by field type — File fields are missing when
+      // null, string fields when empty after trim.
+      const miss = fields.find((f) => {
+        if (!f.required) return false;
+        const val = v[f.id];
+        return f.type === 'file' ? !val : !String(val || '').trim();
+      });
+      if (miss) { document.getElementById(`f-${miss.id}`).setAttribute('aria-invalid', 'true'); document.getElementById(`f-${miss.id}`).focus(); return; }
+      done(fields.length ? v : true);
+    };
     const cancelH = () => done(null);
     const escH = () => { cleanup(); res(null); };
     function cleanup() { okBtn.removeEventListener('click', okH); document.getElementById('dlgCancel').removeEventListener('click', cancelH); dlg.removeEventListener('cancel', escH); document.getElementById('dlgFields').oninput = null; }
@@ -179,11 +196,34 @@ function saveProduct(publish, rerender) {
   // Stock is derived from pieces; the backend treats the field as read-only.
   const payload = { ...p };
   delete payload.id;
-  payload.variants = p.variants.map((v) => { const { stock, ...rest } = v; return rest; });
+  payload.variants = p.variants.map((v) => { const { stock, _starterStock, ...rest } = v; return rest; });
+  // Capture any starter stock entered in the Add Colour modal so we can
+  // create matching pieces after the save lands. Clean the field off the
+  // local draft so repeat saves don't double-receive.
+  const starterReceives = p.variants
+    .filter((v) => (v._starterStock || 0) > 0)
+    .map((v) => ({ vid: v.id, qty: v._starterStock, colour: v.colour }));
+  p.variants.forEach((v) => { delete v._starterStock; });
   const saveCall = wasNew ? api.products.create({ _id: p.id, ...payload }) : api.products.update(p.id, payload);
-  // On failure, roll back the optimistic insert so the ghost row doesn't linger.
+  // On failure, roll back the optimistic change so the UI matches the server:
+  // new products are spliced out entirely; edits re-fetch the untouched doc so
+  // the local draft (e.g. a deleted variant) doesn't linger until the next reload.
   saveCall
-    .then(() => Promise.all([refresh('products')]))
+    .then(async () => {
+      // Create the pieces that back any starter stock the admin typed in
+      // the Add Colour modal. Runs after save so the variant's SKU exists
+      // on the backend. Failures surface as a toast but don't roll back.
+      for (const r of starterReceives) {
+        try {
+          await api.pieces.receive({ pid: p.id, vid: r.vid, qty: r.qty, note: 'Initial stock from Add colour' });
+        } catch (err) {
+          toast(`Failed to receive stock for ${r.colour}: ${err.message}`);
+        }
+      }
+      const refreshes = [refresh('products')];
+      if (starterReceives.length) refreshes.push(refresh('pieces'), refresh('movements'));
+      return Promise.all(refreshes);
+    })
     .then(() => rerender())
     .catch((err) => {
       if (wasNew) {
@@ -191,6 +231,8 @@ function saveProduct(publish, rerender) {
         if (i >= 0) products.splice(i, 1);
         delete PROD[p.id];
         rerender();
+      } else {
+        refresh('products').then(() => rerender()).catch(() => {});
       }
       toast(`Failed to save product: ${err.message}`);
     });
@@ -448,16 +490,89 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       closeDrawer();
       toast('Changes discarded.');
     },
+    deleteProduct: async (el) => {
+      const id = el.dataset.id;
+      const p = PROD[id] || products.find((x) => x.id === id || x._id === id);
+      if (!p) return;
+      const ok = await ask({
+        title: `Delete ${p.name}?`,
+        text: 'The product and its colour variants will be removed. Orders already placed for it are unaffected. This cannot be undone.',
+        ok: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      // Remove from local state first so the row disappears instantly, then
+      // fire the API call in the background. refresh('products') on failure
+      // would reconcile, but we trust the admin UI to be the lone writer.
+      const idx = products.findIndex((x) => x.id === id || x._id === id);
+      if (idx >= 0) products.splice(idx, 1);
+      delete PROD[id];
+      renderPage();
+      toast(`${p.name} deleted.`);
+      sync(api.products.remove(id), 'delete product');
+    },
     addVariant: async () => {
       readProductForm();
       const dp = getDraftP();
       const c = CAT[dp.cat];
       const v = await ask({ title: 'Add a colour', ok: 'Add colour', fields: [{ id: 'c', label: 'Colour', type: 'color', value: '#1f5f7a' }, { id: 'n', label: 'Colour name', required: true, placeholder: 'For example: Peacock blue' }, ...(c.sized ? [{ id: 's', label: 'Size', type: 'select', options: SIZES }] : []), { id: 'q', label: 'Stock', value: '1' }] });
       if (!v) return;
-      dp.variants.push({ id: `nv${Date.now()}`, colour: v.n.trim(), hex: v.c, size: v.s || null, stock: Math.max(0, parseInt(v.q, 10) || 0), sku: '' });
+      // `_starterStock` is a client-only field — saveProduct() reads it,
+      // strips it from the payload, and triggers a pieces.receive after
+      // the save succeeds so the stock the admin typed actually lands.
+      dp.variants.push({ id: `nv${Date.now()}`, colour: v.n.trim(), hex: v.c, size: v.s || null, stock: 0, _starterStock: Math.max(0, parseInt(v.q, 10) || 0), sku: '', imageUrls: [] });
       productDrawer('__redraw');
     },
+    addVariantFromImage: async () => {
+      // Same create flow as addVariant, but on success auto-selects the
+      // new variant as the main image set's colour tag — so the admin who
+      // clicked "New colour" from the Images section doesn't have to scroll
+      // down and retag by hand.
+      readProductForm();
+      const dp = getDraftP();
+      const c = CAT[dp.cat];
+      const v = await ask({
+        title: 'Add a colour',
+        ok: 'Add colour',
+        fields: [
+          { id: 'c', label: 'Colour', type: 'color', value: '#ffffff' },
+          { id: 'n', label: 'Colour name', required: true, placeholder: 'For example: Ivory white' },
+          ...(c.sized ? [{ id: 's', label: 'Size', type: 'select', options: SIZES }] : []),
+          { id: 'q', label: 'Stock', value: '1' },
+        ],
+      });
+      if (!v) return;
+      const newVariant = { id: `nv${Date.now()}`, colour: v.n.trim(), hex: v.c, size: v.s || null, stock: 0, _starterStock: Math.max(0, parseInt(v.q, 10) || 0), sku: '', imageUrls: [] };
+      dp.variants.push(newVariant);
+      dp.imageVariant = newVariant.id;
+      productDrawer('__redraw');
+      toast(`${newVariant.colour} added and tagged to these images.`);
+    },
     removeVariant: (el) => { readProductForm(); getDraftP().variants.splice(Number(el.dataset.i), 1); productDrawer('__redraw'); },
+    addFaq: () => {
+      readProductForm();
+      const dp = getDraftP();
+      if (!Array.isArray(dp.faqs)) dp.faqs = [];
+      dp.faqs.push({ q: '', a: '' });
+      productDrawer('__redraw');
+    },
+    removeFaq: (el) => {
+      readProductForm();
+      const dp = getDraftP();
+      if (!Array.isArray(dp.faqs)) return;
+      dp.faqs.splice(Number(el.dataset.i), 1);
+      productDrawer('__redraw');
+    },
+    removeVariantImage: (el) => {
+      readProductForm();
+      const dp = getDraftP();
+      const i = Number(el.dataset.i);
+      const j = Number(el.dataset.j);
+      const v = dp.variants[i];
+      if (!v || !Array.isArray(v.imageUrls)) return;
+      v.imageUrls.splice(j, 1);
+      productDrawer('__redraw');
+    },
     // INV-02: new stock enters only through this flow. Creates pieces (one barcode per unit)
     // via /api/pieces/receive. Admin does not type stock numbers anywhere.
     receiveStock: async (el) => {
@@ -488,11 +603,24 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       }
     },
     removeImage: (el) => { readProductForm(); const dp = getDraftP(); const i = Number(el.dataset.i); dp.imageUrls.splice(i, 1); dp.images -= 1; productDrawer('__redraw'); },
-    removeVideo: () => { readProductForm(); const dp = getDraftP(); dp.video = false; dp.videoName = ''; productDrawer('__redraw'); },
+    removeVideo: () => { readProductForm(); const dp = getDraftP(); dp.video = false; dp.videoName = ''; dp.videoUrl = ''; productDrawer('__redraw'); },
     bulkStatus: async () => { const ids = lvSelected('products'); const v = await ask({ title: `Change status of ${plural(ids.length, 'product')}`, ok: 'Apply', fields: [{ id: 's', label: 'Status', type: 'select', options: [['Active', 'Live'], 'Draft', 'Hidden'] }] }); if (!v) return; ids.forEach((id) => { PROD[id].status = v.s; }); LV.products.sel.clear(); toast(`${plural(ids.length, 'product')} set to ${v.s === 'Active' ? 'live' : v.s.toLowerCase()}.`); rerender(); sync(api.products.bulkStatus(ids, v.s), 'update product statuses'); },
     bulkFeature: () => { const ids = lvSelected('products').filter((id) => PROD[id].status === 'Active'); ids.forEach((id) => { if (!featured.includes(id)) featured.push(id); }); LV.products.sel.clear(); toast(ids.length ? `${plural(ids.length, 'product')} added to featured weaves.` : 'Only live products can be featured.'); renderPage(); if (ids.length) sync(api.featured.set(featured), 'update featured'); },
     newCategory: () => categoryDrawer('new'),
     editCategory: (el) => categoryDrawer(el.dataset.id),
+    deleteCategory: async (el) => {
+      const id = el.dataset.id;
+      const c = CAT[id];
+      if (!c) return;
+      const inCat = products.filter((p) => p.cat === id);
+      const extra = inCat.length ? ` ${plural(inCat.length, 'product')} in this category will lose their category and need to be reassigned.` : '';
+      const ok = await ask({ title: `Delete ${c.name}?`, text: `The category and its landing page will be removed from the storefront.${extra} This can’t be undone.`, ok: 'Delete', danger: true });
+      if (!ok) return;
+      const idx = categories.indexOf(c); if (idx >= 0) categories.splice(idx, 1);
+      delete CAT[id];
+      renderPage(); toast(`${c.name} deleted.`);
+      sync(api.categories.remove(id), 'delete category');
+    },
     saveCategory: (el) => {
       const name = val('cat-name'); const e = document.getElementById('cat-error');
       if (!name) { e.textContent = 'Give the category a name.'; e.hidden = false; return; }
@@ -609,6 +737,8 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
         ok: 'Add',
         fields: [
           { id: 'label', label: 'Name shown on the store', required: true, placeholder: 'For example: Under ₹10,000' },
+          { id: 'title', label: 'Title (card headline)', placeholder: 'For example: Everyday Drapes' },
+          { id: 'description', label: 'Short description', type: 'area', placeholder: 'A short tagline shown on the storefront tile' },
           { id: 'min', label: 'Minimum price, ₹', value: '0', required: true },
           { id: 'max', label: 'Maximum price, ₹', placeholder: 'Leave blank for “and above”' },
           { id: 'order', label: 'Position (lower first)', value: String(PRICE_RANGES.length) },
@@ -619,7 +749,7 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const maxRaw = String(v.max || '').replace(/[^\d.]/g, '');
       const max = maxRaw === '' ? null : Number(maxRaw);
       if (max != null && max <= min) return toast('Maximum must be greater than minimum.');
-      const doc = { label: v.label.trim(), min, max, order: Number(v.order) || 0, visible: true };
+      const doc = { label: v.label.trim(), title: (v.title || '').trim(), description: (v.description || '').trim(), min, max, order: Number(v.order) || 0, visible: true };
       try {
         const saved = await api.priceRanges.create(doc);
         PRICE_RANGES.push({ ...saved, id: saved._id });
@@ -637,6 +767,8 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
         ok: 'Save',
         fields: [
           { id: 'label', label: 'Name shown on the store', value: b.label, required: true },
+          { id: 'title', label: 'Title (card headline)', value: b.title || '', placeholder: 'For example: Everyday Drapes' },
+          { id: 'description', label: 'Short description', type: 'area', value: b.description || '', placeholder: 'A short tagline shown on the storefront tile' },
           { id: 'min', label: 'Minimum price, ₹', value: String(b.min || 0), required: true },
           { id: 'max', label: 'Maximum price, ₹', value: b.max == null ? '' : String(b.max), placeholder: 'Leave blank for “and above”' },
           { id: 'order', label: 'Position (lower first)', value: String(b.order || 0) },
@@ -647,7 +779,7 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const maxRaw = String(v.max || '').replace(/[^\d.]/g, '');
       const max = maxRaw === '' ? null : Number(maxRaw);
       if (max != null && max <= min) return toast('Maximum must be greater than minimum.');
-      const patch = { label: v.label.trim(), min, max, order: Number(v.order) || 0 };
+      const patch = { label: v.label.trim(), title: (v.title || '').trim(), description: (v.description || '').trim(), min, max, order: Number(v.order) || 0 };
       Object.assign(b, patch);
       renderPage(); toast('Saved.');
       sync(api.priceRanges.update(id, patch), 'update price range');
@@ -670,8 +802,191 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       toast(el.checked ? `${b.label} is shown on the store.` : `${b.label} is hidden.`);
       sync(api.priceRanges.update(id, { visible: b.visible }), 'toggle price range');
     },
+    removePriceRangeImage: async (el) => {
+      const id = el.dataset.id;
+      const b = PRICE_RANGES.find((x) => x._id === id || x.id === id);
+      if (!b || !b.image) return;
+      const ok = await ask({ title: `Remove image from ${b.label}?`, text: 'The tile will go back to the placeholder. You can upload a new image any time.', ok: 'Remove image', danger: true });
+      if (!ok) return;
+      b.image = '';
+      renderPage(); toast('Image removed.');
+      sync(api.priceRanges.update(id, { image: '' }), 'remove price range image');
+    },
+    newHeroSlide: async () => {
+      const v = await ask({
+        title: 'New hero slide',
+        ok: 'Add',
+        fields: [
+          { id: 'imageFile', label: 'Desktop image (banner, recommended 1920×1080 or wider)', type: 'file', required: true, accept: 'image/*' },
+          { id: 'mobileFile', label: 'Mobile image (optional — taller crop used on phones)', type: 'file', accept: 'image/*' },
+          { id: 'headline', label: 'Headline (big gold text)', required: true, placeholder: 'For example: New Arrivals' },
+          { id: 'eyebrow', label: 'Eyebrow (small uppercase above headline)', placeholder: 'For example: Festive' },
+          { id: 'supporting', label: 'Supporting copy', type: 'area', placeholder: 'One or two short sentences' },
+          { id: 'badgeLabel', label: 'Badge (optional chip above eyebrow)', placeholder: 'For example: Just In' },
+          { id: 'badgeTone', label: 'Badge colour', type: 'select', options: [['gold', 'Gold'], ['maroon', 'Maroon']] },
+          { id: 'textSide', label: 'Text side', type: 'select', options: [['right', 'Right'], ['left', 'Left']] },
+          { id: 'objectPosition', label: 'Image focal point (CSS object-position)', placeholder: 'For example: 50% 25%' },
+          { id: 'order', label: 'Position in carousel (lower first)', value: String(HERO_SLIDES.length) },
+        ],
+      });
+      if (!v) return;
+      // Upload both images in a single multi-file request — one less server
+      // round-trip, and the slide lands in the table already complete so the
+      // admin never sees a half-configured row.
+      let imageUrl = ''; let mobileImageUrl = '';
+      try {
+        const files = [v.imageFile, ...(v.mobileFile ? [v.mobileFile] : [])];
+        toast(files.length > 1 ? 'Uploading images…' : 'Uploading image…');
+        const uploaded = await api.uploads.upload(files);
+        const urls = (uploaded?.files || []).map((u) => u.url).filter(Boolean);
+        imageUrl = urls[0] || '';
+        mobileImageUrl = urls[1] || '';
+        if (!imageUrl) throw new Error('Upload returned no URL');
+      } catch (err) {
+        toast(`Failed to upload image: ${err.message}`);
+        return;
+      }
+      const doc = {
+        image: imageUrl,
+        mobileImage: mobileImageUrl,
+        headline: v.headline.trim(),
+        eyebrow: (v.eyebrow || '').trim(),
+        supporting: (v.supporting || '').trim(),
+        badgeLabel: (v.badgeLabel || '').trim(),
+        badgeTone: v.badgeTone === 'maroon' ? 'maroon' : 'gold',
+        textSide: v.textSide === 'left' ? 'left' : 'right',
+        objectPosition: (v.objectPosition || '').trim(),
+        order: Number(v.order) || 0,
+        visible: true,
+      };
+      try {
+        const saved = await api.heroSlides.create(doc);
+        HERO_SLIDES.push({ ...saved, id: saved._id });
+        renderPage(); toast(`${doc.headline} added.`);
+      } catch (err) {
+        toast(`Failed to create hero slide: ${err.message}`);
+      }
+    },
+    editHeroSlide: async (el) => {
+      const id = el.dataset.id;
+      const s = HERO_SLIDES.find((x) => x._id === id || x.id === id);
+      if (!s) return;
+      const v = await ask({
+        title: `Edit ${s.headline}`,
+        ok: 'Save',
+        fields: [
+          { id: 'imageFile', label: `Desktop image${s.image ? ' (leave empty to keep current)' : ' — required'}`, type: 'file', accept: 'image/*' },
+          { id: 'mobileFile', label: `Mobile image${s.mobileImage ? ' (leave empty to keep current)' : ' — optional'}`, type: 'file', accept: 'image/*' },
+          { id: 'headline', label: 'Headline', value: s.headline, required: true },
+          { id: 'eyebrow', label: 'Eyebrow', value: s.eyebrow || '' },
+          { id: 'supporting', label: 'Supporting copy', type: 'area', value: s.supporting || '' },
+          { id: 'badgeLabel', label: 'Badge', value: s.badgeLabel || '' },
+          { id: 'badgeTone', label: 'Badge colour', type: 'select', options: [['gold', 'Gold'], ['maroon', 'Maroon']], value: s.badgeTone || 'gold' },
+          { id: 'textSide', label: 'Text side', type: 'select', options: [['right', 'Right'], ['left', 'Left']], value: s.textSide || 'right' },
+          { id: 'objectPosition', label: 'Image focal point', value: s.objectPosition || '' },
+          { id: 'order', label: 'Position in carousel (lower first)', value: String(s.order || 0) },
+        ],
+      });
+      if (!v) return;
+      // Only files the admin actually picked get uploaded; the rest keep
+      // their existing URLs. The upload payload order determines which URL
+      // maps back to which slot (desktop first, mobile second).
+      const toUpload = [];
+      if (v.imageFile) toUpload.push({ key: 'image', file: v.imageFile });
+      if (v.mobileFile) toUpload.push({ key: 'mobileImage', file: v.mobileFile });
+      let newImageUrl = ''; let newMobileUrl = '';
+      if (toUpload.length) {
+        try {
+          toast(toUpload.length > 1 ? 'Uploading images…' : 'Uploading image…');
+          const uploaded = await api.uploads.upload(toUpload.map((x) => x.file));
+          const urls = (uploaded?.files || []).map((u) => u.url).filter(Boolean);
+          toUpload.forEach((slot, i) => {
+            if (!urls[i]) return;
+            if (slot.key === 'image') newImageUrl = urls[i];
+            if (slot.key === 'mobileImage') newMobileUrl = urls[i];
+          });
+        } catch (err) {
+          toast(`Failed to upload image: ${err.message}`);
+          return;
+        }
+      }
+      const patch = {
+        headline: v.headline.trim(),
+        eyebrow: (v.eyebrow || '').trim(),
+        supporting: (v.supporting || '').trim(),
+        badgeLabel: (v.badgeLabel || '').trim(),
+        badgeTone: v.badgeTone === 'maroon' ? 'maroon' : 'gold',
+        textSide: v.textSide === 'left' ? 'left' : 'right',
+        objectPosition: (v.objectPosition || '').trim(),
+        order: Number(v.order) || 0,
+      };
+      if (newImageUrl) patch.image = newImageUrl;
+      if (newMobileUrl) patch.mobileImage = newMobileUrl;
+      Object.assign(s, patch);
+      renderPage(); toast('Saved.');
+      sync(api.heroSlides.update(id, patch), 'update hero slide');
+    },
+    deleteHeroSlide: async (el) => {
+      const id = el.dataset.id;
+      const s = HERO_SLIDES.find((x) => x._id === id || x.id === id);
+      if (!s) return;
+      const ok = await ask({ title: `Delete “${s.headline}”?`, text: 'The slide and its image reference will be removed. This can’t be undone.', ok: 'Delete', danger: true });
+      if (!ok) return;
+      const idx = HERO_SLIDES.indexOf(s); if (idx >= 0) HERO_SLIDES.splice(idx, 1);
+      renderPage(); toast(`${s.headline} deleted.`);
+      sync(api.heroSlides.remove(id), 'delete hero slide');
+    },
+    toggleHeroSlide: (el) => {
+      const id = el.dataset.id;
+      const s = HERO_SLIDES.find((x) => x._id === id || x.id === id);
+      if (!s) return;
+      s.visible = el.checked;
+      toast(el.checked ? `${s.headline} is shown on the store.` : `${s.headline} is hidden.`);
+      sync(api.heroSlides.update(id, { visible: s.visible }), 'toggle hero slide');
+    },
+    removeHeroSlideImage: async (el) => {
+      const id = el.dataset.id;
+      const s = HERO_SLIDES.find((x) => x._id === id || x.id === id);
+      if (!s || !s.image) return;
+      const ok = await ask({ title: `Remove image from ${s.headline}?`, text: 'The slide will hide from the carousel until a new image is uploaded.', ok: 'Remove image', danger: true });
+      if (!ok) return;
+      s.image = '';
+      renderPage(); toast('Image removed.');
+      sync(api.heroSlides.update(id, { image: '' }), 'remove hero slide image');
+    },
+    removeHeroSlideMobile: async (el) => {
+      const id = el.dataset.id;
+      const s = HERO_SLIDES.find((x) => x._id === id || x.id === id);
+      if (!s || !s.mobileImage) return;
+      const ok = await ask({ title: `Remove mobile image from ${s.headline}?`, text: 'Phones will fall back to the desktop image for this slide.', ok: 'Remove mobile image', danger: true });
+      if (!ok) return;
+      s.mobileImage = '';
+      renderPage(); toast('Mobile image removed.');
+      sync(api.heroSlides.update(id, { mobileImage: '' }), 'remove hero slide mobile image');
+    },
     toggleCoupon: (el) => { const c = coupons.find((x) => x.code === el.dataset.id); c.on = el.checked; toast(el.checked ? `${c.code} is active.` : `${c.code} is switched off. Customers can’t use it.`); sync(api.coupons.toggle(c.code), 'toggle coupon'); },
     addNote: async (el) => { const v = await ask({ title: 'Add a note', ok: 'Save note', fields: [{ id: 't', label: 'Note', type: 'area', required: true, placeholder: 'For example: prefers lighter zari' }] }); if (!v) return; const id = el.dataset.id; const at = iso(TODAY); CUST[id].notes.unshift({ text: v.t, at }); customerDrawer(id); sync(api.customers.addNote(id, v.t, at), 'add note'); },
+    deleteCustomer: async (el) => {
+      const id = el.dataset.id;
+      const c = CUST[id] || customers.find((x) => x.id === id || x._id === id);
+      if (!c) return;
+      const hasOrders = (c.orderCount || 0) > 0;
+      const ok = await ask({
+        title: `Delete ${c.name}?`,
+        text: hasOrders
+          ? `This customer has ${c.orderCount} order${c.orderCount === 1 ? '' : 's'}. The orders stay, but the profile, notes and saved measurements are removed. This cannot be undone.`
+          : 'The profile, notes and saved measurements are removed. This cannot be undone.',
+        ok: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      const idx = customers.findIndex((x) => x.id === id || x._id === id);
+      if (idx >= 0) customers.splice(idx, 1);
+      delete CUST[id];
+      renderPage();
+      toast(`${c.name} deleted.`);
+      sync(api.customers.remove(id), 'delete customer');
+    },
     bulkNote: async () => { const ids = lvSelected('customers'); const v = await ask({ title: `Add a note to ${plural(ids.length, 'customer')}`, ok: 'Save note', fields: [{ id: 't', label: 'Note', type: 'area', required: true }] }); if (!v) return; const at = iso(TODAY); ids.forEach((id) => CUST[id].notes.unshift({ text: v.t, at })); LV.customers.sel.clear(); toast('Note added.'); renderPage(); sync(api.customers.bulkNote(ids, v.t), 'add notes'); },
     approveReview: (el) => { const id = el.dataset.id; reviews.find((r) => r.id === id).status = 'Published'; toast('Published.'); rerender(); sync(api.reviews.approve(id), 'approve review'); },
     rejectReview: (el) => { const id = el.dataset.id; reviews.find((r) => r.id === id).status = 'Rejected'; toast('Rejected. It won’t appear on the store.'); rerender(); sync(api.reviews.reject(id), 'reject review'); },
@@ -704,6 +1019,27 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       else sync(api.journal.update(j.id, payload), 'save article');
     },
     saveScenes: () => { SCENES.forEach((s, i) => { s.name = val(`scene-n-${i}`) || s.name; s.line = val(`scene-${i}`) || s.line; }); toast('Homepage lines saved.'); sync(api.scenes.replace(SCENES.map((s, i) => ({ order: i, name: s.name, line: s.line }))), 'save scenes'); },
+    saveBanner: async (el) => {
+      // Read the four fields off the DOM so unsaved edits are included
+      // without needing per-field state. PATCH is upsert-friendly on the
+      // backend, so a slot that didn't exist yet is created on first save.
+      const slot = el.dataset.slot;
+      const patch = {
+        image: (HOME_BANNERS.find((x) => x.slot === slot)?.image) || '',
+        eyebrow: val(`hb-eyebrow-${slot}`) || '',
+        title: val(`hb-title-${slot}`) || '',
+        description: val(`hb-desc-${slot}`) || '',
+      };
+      try {
+        const saved = await api.homeBanners.update(slot, patch);
+        const idx = HOME_BANNERS.findIndex((x) => x.slot === slot);
+        if (idx >= 0) HOME_BANNERS[idx] = { ...saved, id: saved._id };
+        else HOME_BANNERS.push({ ...saved, id: saved._id });
+        toast('Banner saved.');
+      } catch (err) {
+        toast(`Failed to save banner: ${err.message}`);
+      }
+    },
     addScene: () => { SCENES.forEach((s, i) => { s.name = val(`scene-n-${i}`) || s.name; s.line = val(`scene-${i}`) || s.line; }); SCENES.push({ name: `Scene ${SCENES.length + 1}`, line: '' }); renderPage(); sync(api.scenes.replace(SCENES.map((s, i) => ({ order: i, name: s.name, line: s.line }))), 'add scene'); },
     delScene: (el) => { if (SCENES.length <= 1) return; SCENES.forEach((s, i) => { s.name = val(`scene-n-${i}`) || s.name; s.line = val(`scene-${i}`) || s.line; }); SCENES.splice(Number(el.dataset.i), 1); renderPage(); sync(api.scenes.replace(SCENES.map((s, i) => ({ order: i, name: s.name, line: s.line }))), 'delete scene'); },
     pickFeatured: () => featuredDrawer(),
@@ -711,7 +1047,29 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     moveFeatured: (el) => { const i = featured.indexOf(el.dataset.id); const j = i + Number(el.dataset.dir); const next = [...featured]; [next[i], next[j]] = [next[j], next[i]]; setFeatured(next); renderPage(); sync(api.featured.set(next), 'reorder featured'); },
     unfeature: (el) => { const next = featured.filter((x) => x !== el.dataset.id); setFeatured(next); renderPage(); sync(api.featured.set(next), 'unfeature'); },
     editPage: (el) => pageDrawer(Number(el.dataset.i)),
-    removePageBanner: (el) => { const p = PAGES_CMS[Number(el.dataset.i)]; p.banner = ''; p.updated = iso(TODAY); renderPage(); toast(`${p.name} banner removed.`); sync(api.pages.update(p.name, { name: p.name, desc: p.desc, body: p.body, banner: '' }), 'remove banner'); },
+    deletePage: async (el) => {
+      const i = Number(el.dataset.i);
+      const p = PAGES_CMS[i];
+      if (!p) return;
+      const ok = await ask({ title: `Delete ${p.name}?`, text: 'The page and its banner images will be removed from the storefront. This can’t be undone.', ok: 'Delete', danger: true });
+      if (!ok) return;
+      PAGES_CMS.splice(i, 1);
+      renderPage(); toast(`${p.name} deleted.`);
+      sync(api.pages.remove(p.name), 'delete page');
+    },
+    removePageBanner: (el) => {
+      const p = PAGES_CMS[Number(el.dataset.i)];
+      const bi = el.dataset.bi !== undefined ? Number(el.dataset.bi) : -1;
+      const current = Array.isArray(p.banners) ? [...p.banners] : (p.banner ? [p.banner] : []);
+      if (bi >= 0 && bi < current.length) current.splice(bi, 1);
+      else current.length = 0;
+      p.banners = current;
+      p.banner = current[0] || '';
+      p.updated = iso(TODAY);
+      renderPage();
+      toast(`${p.name} banner removed.`);
+      sync(api.pages.update(p.name, { name: p.name, desc: p.desc, body: p.body, banners: p.banners }), 'remove banner');
+    },
     savePage: (el) => { const p = PAGES_CMS[Number(el.dataset.i)]; p.body = val('pg-body'); p.updated = iso(TODAY); closeDrawer(); renderPage(); toast(`${p.name} saved.`); sync(api.pages.update(p.name, { name: p.name, desc: p.desc, body: p.body }), 'save page'); },
     saveSettings: () => saveSettings(rerender),
     checkRate: () => {

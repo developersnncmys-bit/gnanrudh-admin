@@ -21,6 +21,13 @@ export const OCCASIONS_FULL = [];
 // Hydrated from /api/price-ranges on bootstrap. Each entry: { _id, label, min, max, order, visible }.
 // max === null means "and above".
 export const PRICE_RANGES = [];
+// Hydrated from /api/hero-slides on bootstrap. One row per storefront homepage
+// hero carousel slide. See models/HeroSlide.js for the full field list.
+export const HERO_SLIDES = [];
+// Hydrated from /api/home-banners on bootstrap. Two fixed rows keyed by
+// `slot` ('explore' and 'bridal') — the two promotional banner strips on
+// the storefront homepage.
+export const HOME_BANNERS = [];
 export const SIZES = ['32', '34', '36', '38', '40'];
 export const COURIERS = ['Delhivery', 'Blue Dart', 'DTDC', 'Ekart', 'Xpressbees'];
 export const M_FIELDS = [['bust', 'Bust'], ['waist', 'Waist'], ['shoulder', 'Shoulder'], ['sleeve', 'Sleeve length'], ['armhole', 'Armhole'], ['length', 'Blouse length'], ['neckF', 'Neck depth, front'], ['neckB', 'Neck depth, back']];
@@ -94,7 +101,13 @@ const toDate = (v) => (typeof v === 'string' && v.length === 10 ? new Date(`${v}
 const TODAY = toDate(iso(new Date()));
 const daysFrom = (v) => Math.round((toDate(iso(toDate(v))) - TODAY) / 864e5);
 
-export const stockOf = (p) => p.variants.reduce((a, v) => a + v.stock, 0);
+// Live in-stock count for a product, computed from the barcoded `pieces`
+// collection — matches what the Inventory page shows. The `variant.stock`
+// field on the product doc is a stale denormalisation (never rewritten when
+// pieces are received/shipped) and must not be read directly. Defined below
+// pieces/piecesOf so the arrays are already populated.
+export const stockOf = (p) =>
+  p.variants.reduce((a, v) => a + piecesOf(v.id, 'In stock').length, 0);
 // Payments received: money actually in the account. Prepaid orders in payment.status 'Paid'
 // and COD orders where cash was collected on delivery. Excludes COD pending, COD not collected
 // (RTO), Pending Razorpay webhooks and Refunded.
@@ -111,7 +124,9 @@ export const queue = () => ({
   reviews: reviews.filter((r) => r.status === 'Pending').length,
   drafts: products.filter((p) => p.status === 'Draft').length,
   webhook: shipLog.filter((s) => s.webhook !== 'Received').length,
-  oos: products.filter((p) => p.status === 'Active' && p.variants.some((v) => v.stock === 0)).length,
+  // Variant is considered OOS when zero barcoded pieces are In stock. The
+  // stale v.stock field would wrongly flag everything as OOS.
+  oos: products.filter((p) => p.status === 'Active' && p.variants.some((v) => piecesOf(v.id, 'In stock').length === 0)).length,
   ready: orders.filter((o) => o.status === 'Label generated').length,
 });
 
@@ -187,7 +202,7 @@ export function computeCRM() {
 /* ---------- Bootstrap: fetch everything, then populate ---------- */
 export async function bootstrap() {
   const [
-    cats, prods, custs, ords, rets, ship, cpns, revs, jrnl, pgs, scns, feat, sett, occs, pricesList, pcs, mvs,
+    cats, prods, custs, ords, rets, ship, cpns, revs, jrnl, pgs, scns, feat, sett, occs, pricesList, pcs, mvs, slides, banners,
   ] = await Promise.all([
     api.categories.list(), api.products.list(), api.customers.list(),
     api.orders.list(), api.returns.list(), api.shipping.list(),
@@ -197,6 +212,8 @@ export async function bootstrap() {
     api.priceRanges.list().catch(() => []),
     api.pieces.list().catch(() => []),
     api.movements.list().catch(() => []),
+    api.heroSlides.list().catch(() => []),
+    api.homeBanners.list().catch(() => []),
   ]);
 
   refill(categories, cats.map(norm));
@@ -208,11 +225,13 @@ export async function bootstrap() {
   refill(coupons, cpns.map((c) => ({ ...norm(c), code: c._id })));
   refill(reviews, revs.map(norm));
   refill(journal, jrnl.map(norm));
-  refill(PAGES_CMS, pgs);
+  refill(PAGES_CMS, pgs.map((p) => ({ ...p, banners: Array.isArray(p.banners) && p.banners.length ? p.banners : (p.banner ? [p.banner] : []) })));
   refill(SCENES, scns);
   refill(OCCASIONS_FULL, (occs || []).map((o) => ({ name: o.name || o._id, parent: o.parent || null, order: o.order ?? 0, image: o.image || '' })));
   if (occs?.length) refill(OCCASIONS, occs.map((o) => o.name || o._id));
   refill(PRICE_RANGES, (pricesList || []).map(norm));
+  refill(HERO_SLIDES, (slides || []).map(norm));
+  refill(HOME_BANNERS, (banners || []).map(norm));
   refill(pieces, (pcs || []).map((u) => ({ ...norm(u), code: u._id })));
   refill(moves, (mvs || []).map(norm));
 
@@ -244,11 +263,13 @@ export async function refresh(resource) {
     coupons:    () => api.coupons.list().then((d)    => { refill(coupons, d.map((c) => ({ ...norm(c), code: c._id }))); }),
     reviews:    () => api.reviews.list().then((d)    => { refill(reviews, d.map(norm)); }),
     journal:    () => api.journal.list().then((d)    => { refill(journal, d.map(norm)); }),
-    pages:      () => api.pages.list().then((d)      => { refill(PAGES_CMS, d); }),
+    pages:      () => api.pages.list().then((d)      => { refill(PAGES_CMS, d.map((p) => ({ ...p, banners: Array.isArray(p.banners) && p.banners.length ? p.banners : (p.banner ? [p.banner] : []) }))); }),
     scenes:     () => api.scenes.list().then((d)     => { refill(SCENES, d); }),
     featured:   () => api.featured.get().then((d)    => { setFeatured(Array.isArray(d?.ids) ? d.ids : []); }),
     occasions:  () => api.occasions.list().then((d)  => { refill(OCCASIONS, d.map((o) => o.name || o._id)); refill(OCCASIONS_FULL, d.map((o) => ({ name: o.name || o._id, parent: o.parent || null, order: o.order ?? 0, image: o.image || '' }))); }),
     priceRanges:() => api.priceRanges.list().then((d) => { refill(PRICE_RANGES, d.map(norm)); }),
+    heroSlides: () => api.heroSlides.list().then((d) => { refill(HERO_SLIDES, d.map(norm)); }),
+    homeBanners: () => api.homeBanners.list().then((d) => { refill(HOME_BANNERS, d.map(norm)); }),
     pieces:     () => api.pieces.list().then((d)     => { refill(pieces, d.map((u) => ({ ...norm(u), code: u._id }))); rebuildIndexes(); }),
     movements:  () => api.movements.list().then((d)  => { refill(moves, d.map(norm)); }),
   };

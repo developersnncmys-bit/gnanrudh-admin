@@ -131,6 +131,16 @@ export const api = {
     update: (id, p) => patch(`/price-ranges/${id}`, p),
     remove: (id) => del(`/price-ranges/${id}`),
   },
+  heroSlides: {
+    list: () => list('/hero-slides'),
+    create: (doc) => post('/hero-slides', doc),
+    update: (id, p) => patch(`/hero-slides/${id}`, p),
+    remove: (id) => del(`/hero-slides/${id}`),
+  },
+  homeBanners: {
+    list: () => list('/home-banners'),
+    update: (slot, p) => patch(`/home-banners/${slot}`, p),
+  },
   products: {
     list: () => list('/products'),
     get: (id) => get(`/products/${id}`),
@@ -144,6 +154,7 @@ export const api = {
     list: () => list('/customers'),
     get: (id) => get(`/customers/${id}`),
     update: (id, p) => patch(`/customers/${id}`, p),
+    remove: (id) => del(`/customers/${id}`),
     addNote: (id, text, at) => post(`/customers/${id}/notes`, { text, at }),
     bulkNote: (ids, text) => post('/customers/notes', { ids, text }),
   },
@@ -193,6 +204,7 @@ export const api = {
   pages: {
     list: () => list('/pages'),
     update: (name, body) => put(`/pages/${encodeURIComponent(name)}`, body),
+    remove: (name) => del(`/pages/${encodeURIComponent(name)}`),
   },
   scenes: {
     list: () => list('/scenes'),

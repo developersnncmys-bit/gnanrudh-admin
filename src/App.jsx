@@ -10,7 +10,7 @@ import { buildActions, openPalette, renderPalette, choosePalette, CHECK_ACTS, to
 import { installGlobalScanner } from './lib/scanner.js';
 import { LV } from './lib/renderers.js';
 import { debounce, esc, iso, TODAY } from './lib/utils.js';
-import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, bootstrap } from './lib/data.js';
+import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS, bootstrap } from './lib/data.js';
 import { api, auth, onAuthExpired } from './lib/api.js';
 import LoginPage from './components/LoginPage.jsx';
 
@@ -197,7 +197,10 @@ function App() {
         const dp = getDraftP();
         dp.cat = el.value;
         const c = CAT[el.value];
-        dp.weave = c.weaves[0];
+        // Category IS the weave — product.weave mirrors the category name so
+        // storefront filters that key off `weave` keep working without a
+        // schema migration. See drawers.js hint under the Category field.
+        dp.weave = c.name;
         if (!c.saree) { dp.blousePiece = false; dp.zari = null; }
         else if (!dp.zari) dp.zari = 'No zari';
         productDrawer('__redraw');
@@ -212,6 +215,28 @@ function App() {
             uploaded.forEach(({ url }) => { dp.imageUrls[dp.images] = url; dp.images += 1; });
             productDrawer('__redraw');
             toast(`Uploaded ${uploaded.length} image${uploaded.length > 1 ? 's' : ''}.`);
+          })
+          .catch((err) => toast(`Upload failed: ${err.message}`));
+        el.value = '';
+      }
+      // Per-variant image uploads — the file input carries data-vimg-i to
+      // route the uploaded URLs onto draftP.variants[i].imageUrls.
+      if (el.dataset.vimgI !== undefined && el.files?.length) {
+        readProductForm();
+        const dp = getDraftP();
+        const i = Number(el.dataset.vimgI);
+        const variant = dp.variants[i];
+        if (!variant) { el.value = ''; return; }
+        if (!Array.isArray(variant.imageUrls)) variant.imageUrls = [];
+        const files = [...el.files];
+        const label = variant.colour || `variant ${i + 1}`;
+        toast(`Uploading ${files.length} image${files.length > 1 ? 's' : ''} for ${label}…`);
+        api.uploads.upload(files)
+          .then(({ files: uploaded }) => {
+            const urls = (uploaded || []).map((u) => u.url).filter(Boolean);
+            variant.imageUrls.push(...urls);
+            productDrawer('__redraw');
+            toast(`Uploaded ${urls.length} image${urls.length > 1 ? 's' : ''} for ${label}.`);
           })
           .catch((err) => toast(`Upload failed: ${err.message}`));
         el.value = '';
@@ -276,18 +301,74 @@ function App() {
           .catch((err) => toast(`Upload failed: ${err.message}`));
         el.value = '';
       }
-      if (el.id.startsWith('pg-banner-') && el.files?.length) {
-        const i = Number(el.dataset.i);
+      if (el.dataset.prImg && el.files?.length) {
+        const id = el.dataset.prImg;
         const file = el.files[0];
-        const page = PAGES_CMS[i];
-        toast(`Uploading banner for ${page.name}…`);
+        const b = PRICE_RANGES.find((x) => x._id === id || x.id === id);
+        const label = b?.label || 'price range';
+        toast(`Uploading image for ${label}…`);
         api.uploads.upload([file])
           .then(({ files: [uploaded] }) => {
-            page.banner = uploaded.url;
+            if (b) b.image = uploaded.url;
+            renderPage();
+            toast('Image uploaded.');
+            return api.priceRanges.update(id, { image: uploaded.url });
+          })
+          .catch((err) => toast(`Upload failed: ${err.message}`));
+        el.value = '';
+      }
+      if (el.dataset.hsImg && el.files?.length) {
+        const id = el.dataset.hsImg;
+        const file = el.files[0];
+        const s = HERO_SLIDES.find((x) => x._id === id || x.id === id);
+        const label = s?.headline || 'hero slide';
+        toast(`Uploading image for ${label}…`);
+        api.uploads.upload([file])
+          .then(({ files: [uploaded] }) => {
+            if (s) s.image = uploaded.url;
+            renderPage();
+            toast('Image uploaded.');
+            return api.heroSlides.update(id, { image: uploaded.url });
+          })
+          .catch((err) => toast(`Upload failed: ${err.message}`));
+        el.value = '';
+      }
+      if (el.dataset.hbSlot && el.files?.length) {
+        // Home-banner image input (Storefront page → Home banners card).
+        // Optimistically flips the local HOME_BANNERS row's `image` so the
+        // thumbnail updates instantly, then fires the backend PATCH so the
+        // storefront reads the new URL on next fetch.
+        const slot = el.dataset.hbSlot;
+        const file = el.files[0];
+        toast('Uploading image…');
+        api.uploads.upload([file])
+          .then(({ files: [uploaded] }) => {
+            const url = uploaded?.url;
+            if (!url) throw new Error('Upload returned no URL');
+            const idx = HOME_BANNERS.findIndex((x) => x.slot === slot);
+            if (idx >= 0) HOME_BANNERS[idx].image = url;
+            else HOME_BANNERS.push({ slot, image: url, eyebrow: '', title: '', description: '' });
+            renderPage();
+            toast('Image uploaded.');
+            return api.homeBanners.update(slot, { image: url });
+          })
+          .catch((err) => toast(`Upload failed: ${err.message}`));
+        el.value = '';
+      }
+      if (el.id.startsWith('pg-banner-') && el.files?.length) {
+        const i = Number(el.dataset.i);
+        const files = Array.from(el.files);
+        const page = PAGES_CMS[i];
+        toast(files.length > 1 ? `Uploading ${files.length} banners for ${page.name}…` : `Uploading banner for ${page.name}…`);
+        api.uploads.upload(files)
+          .then(({ files: uploaded }) => {
+            const urls = (uploaded || []).map((u) => u.url).filter(Boolean);
+            page.banners = [...(Array.isArray(page.banners) ? page.banners : (page.banner ? [page.banner] : [])), ...urls];
+            page.banner = page.banners[0] || '';
             page.updated = iso(TODAY);
             renderPage();
-            toast(`${page.name} banner updated.`);
-            api.pages.update(page.name, { name: page.name, desc: page.desc, body: page.body, banner: page.banner })
+            toast(urls.length > 1 ? `${urls.length} banners added to ${page.name}.` : `${page.name} banner updated.`);
+            api.pages.update(page.name, { name: page.name, desc: page.desc, body: page.body, banners: page.banners })
               .catch((err) => toast(`Save failed: ${err.message}`));
           })
           .catch((err) => toast(`Upload failed: ${err.message}`));

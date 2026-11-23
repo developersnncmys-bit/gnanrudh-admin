@@ -6,13 +6,13 @@ import {
 } from './utils.js';
 import { computeGstRate } from './gst.js';
 import {
-  categories, CAT, COLORS, OCCASIONS, OCCASIONS_FULL, SIZES, BORDERS, products, PROD, stockOf, customers, CUST,
+  categories, CAT, COLORS, OCCASIONS, OCCASIONS_FULL, SIZES, products, PROD, stockOf, customers, CUST,
   orders, ORD, jobs, STITCH_STAGES, returns, POLICY, shipLog, COURIERS, coupons,
   reviews, journal, SCENES, PAGES_CMS, SETTINGS, M_FIELDS, featured, setFeatured,
-  pieces, PIECE, PIECE_TONE, moves, varRef,
+  pieces, PIECE, PIECE_TONE, piecesOf, moves, varRef,
 } from './data.js';
 import {
-  ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, gstLines,
+  ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, thumb, prodCell, variantOf, seg, gstLines,
 } from './renderers.js';
 
 /* ---------- Drawer open / close ---------- */
@@ -309,18 +309,55 @@ export function returnDrawer(id) {
 export let draftP = null;
 export const setDraftP = (v) => { draftP = v; };
 export const getDraftP = () => draftP;
-const BLANK_PRODUCT = () => ({ id: 'new', cat: 'silk', weave: 'Kanjivaram', name: '', price: '', compareAt: '', variants: [{ id: `nv${Date.now()}`, colour: 'Maroon', hex: '#6d1b2c', size: null, stock: 1, sku: '' }], hex: '#6d1b2c', zariHex: '#c9a227', fabric: 'Pure silk', zari: 'Pure zari', border: 'Temple border', occasion: 'Wedding', length: '6.3 m', width: '1.2 m', blousePiece: true, care: '', colourNote: 'Photographed in daylight. Screens vary; the fabric may read slightly warmer in person.', modelHeight: '', drapeStyle: 'Nivi', images: 0, imageUrls: [], video: false, videoName: '', hsn: '', gst: '', status: 'Draft', reviews: 0, rating: '0', views: 0, carts: 0 });
+const BLANK_PRODUCT = () => {
+  // Seed with the first available category so weave === category.name from
+  // the start — the pf-cat change handler keeps them in sync thereafter.
+  const firstCat = categories[0] || { id: 'silk', name: 'Silk Sarees' };
+  // Start with no colour variants — the admin clicks "Add colour" to pick
+  // the actual colourways for this product. Pre-seeding Maroon was leaving
+  // an unwanted default on every new product.
+  return { id: 'new', cat: firstCat.id, weave: firstCat.name, name: '', price: '', compareAt: '', variants: [], hex: '#6d1b2c', zariHex: '#c9a227', zari: 'Pure zari', occasion: 'Wedding', length: '6.3 m', blousePiece: true, blouseLength: '0.8 m', styleNo: '', colourLabel: '', images: 0, imageUrls: [], badges: [], designNo: '', packContains: '1 Saree, 1 Unstitched Blouse Fabric', manufacturedBy: 'House Of GnanRudh Pvt Ltd, Nellore', speciality: '', styleTip: '', fitTip: '', shippingNote: '', faqs: [], video: false, videoName: '', videoUrl: '', hsn: '', gst: '', status: 'Draft', reviews: 0, rating: '0', views: 0, carts: 0 };
+};
 const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
 export function readProductForm() {
   const p = draftP; if (!p || !document.getElementById('pf-name')) return;
   const set = (k, id, fn = (x) => x) => { const v = val(id); if (v !== undefined) p[k] = fn(v); };
-  set('name', 'pf-name'); set('weave', 'pf-weave'); set('price', 'pf-price', (v) => (v === '' ? '' : Number(v.replace(/[^\d.]/g, '')))); set('compareAt', 'pf-compare', (v) => (v === '' ? null : Number(v.replace(/[^\d.]/g, ''))));
-  set('status', 'pf-status'); set('fabric', 'pf-fabric'); set('zari', 'pf-zari'); set('border', 'pf-border'); set('blousePiece', 'pf-blouse', (v) => v === 'yes');
+  // `weave` is no longer a form input — it's kept in sync with the chosen
+  // category's name by the pf-cat change handler (see App.jsx) so Category
+  // IS the Weave. Reads of pf-weave are deliberately omitted.
+  set('name', 'pf-name'); set('price', 'pf-price', (v) => (v === '' ? '' : Number(v.replace(/[^\d.]/g, '')))); set('compareAt', 'pf-compare', (v) => (v === '' ? null : Number(v.replace(/[^\d.]/g, ''))));
+  set('status', 'pf-status'); set('zari', 'pf-zari'); set('blousePiece', 'pf-blouse', (v) => v === 'yes');
   // CAT-04: collect checked occasions. p.occasion (legacy string) mirrors occasions[0].
   const occs = [...document.querySelectorAll('[name="pf-occ"]:checked')].map((el) => el.value);
   if (occs.length) { p.occasions = occs; p.occasion = occs[0]; }
   else { p.occasions = []; p.occasion = ''; }
-  set('length', 'pf-length'); set('width', 'pf-width'); set('modelHeight', 'pf-model'); set('drapeStyle', 'pf-drape'); set('care', 'pf-care'); set('colourNote', 'pf-colnote'); set('hsn', 'pf-hsn'); set('gst', 'pf-gst', (v) => (v === '' ? '' : Number(v)));
+  set('length', 'pf-length'); set('blouseLength', 'pf-blouseLength'); set('hsn', 'pf-hsn'); set('gst', 'pf-gst', (v) => (v === '' ? '' : Number(v)));
+  // PDP detail fields.
+  set('styleNo', 'pf-styleNo'); set('designNo', 'pf-designNo'); set('colourLabel', 'pf-colourLabel');
+  set('packContains', 'pf-packContains'); set('manufacturedBy', 'pf-manufacturedBy');
+  // PDP tab copy fields — speciality / style tip / fit tip / shipping note.
+  set('speciality', 'pf-speciality'); set('styleTip', 'pf-styleTip'); set('fitTip', 'pf-fitTip'); set('shippingNote', 'pf-shippingNote');
+  // FAQ pairs — read by index from the repeater row inputs.
+  const faqQEls = document.querySelectorAll('[data-faq-q]');
+  if (faqQEls.length) {
+    const faqs = [];
+    faqQEls.forEach((qEl) => {
+      const i = Number(qEl.dataset.faqQ);
+      const aEl = document.querySelector(`[data-faq-a="${i}"]`);
+      const q = String(qEl.value || '').trim();
+      const a = String(aEl?.value || '').trim();
+      // Keep a row only if at least the question is written; empty-empty
+      // rows are a stale draft the admin left behind.
+      if (q || a) faqs[i] = { q, a };
+    });
+    p.faqs = faqs.filter(Boolean);
+  }
+  // Single colour tag for the whole main image set.
+  set('imageVariant', 'pf-image-variant');
+  // Admin-picked storefront badges. Order follows the checkbox order in
+  // the drawer so re-saves don't shuffle the array for no reason.
+  const badgeEls = document.querySelectorAll('[name="pf-badge"]:checked');
+  p.badges = Array.from(badgeEls).map((el) => el.value);
   // INV-02: stock is derived from pieces now, never typed in the form. No data-vstock read.
 }
 export function productDrawer(id) {
@@ -328,6 +365,8 @@ export function productDrawer(id) {
   if (id === '__redraw') { scroll = document.getElementById('drawer').querySelector('.d-body')?.scrollTop || 0; } else {
     const src = id === 'new' ? BLANK_PRODUCT() : PROD[id];
     draftP = JSON.parse(JSON.stringify(src)); draftP.imageUrls = (src.imageUrls || []).slice();
+    // Single colour tag for the whole main image set. '' = shared.
+    draftP.imageVariant = src.imageVariant || '';
   }
   const p = draftP; const c = CAT[p.cat] || categories[0];
   const opt = (arr, v) => arr.map((o) => `<option value="${esc(ov(o))}"${String(ov(o)) === String(v) ? ' selected' : ''}>${esc(ol(o))}</option>`).join('');
@@ -335,17 +374,36 @@ export function productDrawer(id) {
   const inp = (id_, v, ph = '') => `<input class="ctl" id="${id_}" value="${esc(v ?? '')}" placeholder="${esc(ph)}">`;
   const sel = (id_, arr, v) => `<select class="ctl" id="${id_}">${opt(arr, v)}</select>`;
   const tiles = Array.from({ length: p.images }, (_, i) => p.imageUrls[i] ? `<div class="photo on img" style="background-image:url('${p.imageUrls[i]}')"><button type="button" class="photo-x" data-act="removeImage" data-i="${i}" aria-label="Remove image ${i + 1}">${icon('x', 12)}</button></div>` : `<div class="photo on" style="--b:${p.hex};--z:${p.zariHex}">Image ${i + 1}<button type="button" class="photo-x" data-act="removeImage" data-i="${i}" aria-label="Remove image ${i + 1}">${icon('x', 12)}</button></div>`).join('');
-  openDrawer(`<div class="d-head">${sw(p, 'lg')}<div class="grow"><h2 class="d-title" id="dTitle">${esc(p.name || 'New product')}</h2><div style="display:flex;gap:8px;align-items:center;margin-top:6px">${pill(p.status === 'Active' ? 'Live' : p.status, p.status === 'Active' ? 'ok' : 'warn', true)}<span class="small muted">${esc(c.name)}</span></div></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
+  // Single colour tag for the main image set — admin picks which colour
+  // these photos represent, or leaves it as "Shared" to show on every
+  // colour. One choice covers every image in the set so every photo is
+  // understood to be of the same colour.
+  const mainImageVariantOpts = [['', 'Shared (all colours)'], ...p.variants.map((v) => [v.id, v.colour || 'Untitled colour'])];
+  openDrawer(`<div class="d-head">${thumb(p, 'lg')}<div class="grow"><h2 class="d-title" id="dTitle">${esc(p.name || 'New product')}</h2><div style="display:flex;gap:8px;align-items:center;margin-top:6px">${pill(p.status === 'Active' ? 'Live' : p.status, p.status === 'Active' ? 'ok' : 'warn', true)}<span class="small muted">${esc(c.name)}</span></div></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
     <div class="d-body">
-      <div class="d-sec"><h3>Images and video <span class="small faint">${plural(p.images, 'image')}</span></h3>
+      <div class="d-sec"><h3>Images <span class="small faint">${plural(p.images, 'image')}</span></h3>
         <div class="photo-grid">${tiles}<label class="photo add" for="pf-files">${icon('plus', 18)}<span>Add images</span></label></div>
         <input type="file" id="pf-files" accept="image/*" multiple hidden>
         <p class="sub">Shown with deep zoom at the resolution you upload.</p>
-        ${c.saree ? `<div class="setrow" style="margin-top:8px"><span><b>Drape video</b><span>${p.video ? esc(p.videoName || 'Uploaded') : 'Not added'}</span></span><span style="display:flex;gap:8px">${p.video ? '<button type="button" class="btn btn-ghost btn-sm" data-act="removeVideo">Remove</button>' : ''}<label class="btn btn-sec btn-sm" for="pf-video">${p.video ? 'Replace' : 'Add video'}</label></span><input type="file" id="pf-video" accept="video/*" hidden></div>` : ''}</div>
+        <div class="setrow" style="margin-top:10px;align-items:center">
+          <span><b>These images are of</b><span class="small muted">All photos in the set above are understood to be of this colour.</span></span>
+          <span style="display:flex;gap:8px;align-items:center">
+            <select class="ctl" id="pf-image-variant" style="max-width:220px">${mainImageVariantOpts.map(([val, lbl]) => `<option value="${esc(val)}"${String(p.imageVariant || '') === String(val) ? ' selected' : ''}>${esc(lbl)}</option>`).join('')}</select>
+            <button type="button" class="btn btn-sec btn-sm" data-act="addVariantFromImage" title="Add a new colour and tag these images with it">${icon('plus', 14)}New colour</button>
+          </span>
+        </div>
+        <div class="setrow" style="margin-top:10px">
+          <span><b>Drape video</b><span class="small muted">${p.video ? esc(p.videoName || 'Uploaded') : 'Optional — shown as the last thumbnail on the PDP gallery.'}</span></span>
+          <span style="display:flex;gap:8px">
+            ${p.video ? '<button type="button" class="btn btn-ghost btn-sm" data-act="removeVideo">Remove</button>' : ''}
+            <label class="btn btn-sec btn-sm" for="pf-video">${p.video ? 'Replace' : 'Add video'}</label>
+          </span>
+          <input type="file" id="pf-video" accept="video/*" hidden>
+        </div></div>
       <div class="d-sec"><h3>Basics</h3><div class="form-grid">
         ${f('Name', 'pf-name', inp('pf-name', p.name, 'Colour, weave and the defining motif'), '', true)}
-        ${f('Category', 'pf-cat', sel('pf-cat', categories.map((x) => [x.id, x.name]), p.cat))}
-        ${f('Weave or type', 'pf-weave', sel('pf-weave', c.weaves.includes(p.weave) ? c.weaves : [p.weave, ...c.weaves], p.weave))}
+        ${f('Category', 'pf-cat', sel('pf-cat', categories.map((x) => [x.id, x.name]), p.cat), 'Category is also the weave — product.weave is saved as the category name.')}
+        ${f('Status', 'pf-status', sel('pf-status', [['Active', 'Live'], 'Draft', 'Hidden'], p.status))}
         ${f('Price, ₹, incl. GST', 'pf-price', inp('pf-price', p.price))}${f('Compare-at price, ₹', 'pf-compare', inp('pf-compare', p.compareAt || '', 'Optional'))}
         ${(() => {
           // CAT-04: at least one occasion must be picked. Multi-select checkbox group.
@@ -415,19 +473,91 @@ export function productDrawer(id) {
           }
           return f('Occasions', 'pf-occ', `<div id="pf-occ">${styles}${body}</div>`, 'Pick the top-level occasion plus any matching sub-category. Multiple allowed.', true);
         })()}
-        ${f('Status', 'pf-status', sel('pf-status', [['Active', 'Live'], 'Draft', 'Hidden'], p.status))}</div></div>
+        ${(() => {
+          // Storefront badges — admin-controlled ribbons/chips shown on
+          // cards and the PDP. Multi-select checkbox chips; each badge is
+          // its own kind so the admin can mix (e.g. Bestseller + On Sale).
+          const BADGE_OPTIONS = [
+            ['bestseller', 'Bestseller'],
+            ['onsale', 'On Sale'],
+            ['newin', 'New In'],
+            ['featured', 'Featured'],
+            ['ready', 'Ready To Ship'],
+            ['fast', 'Selling Fast'],
+          ];
+          const pickedBadges = new Set(Array.isArray(p.badges) ? p.badges : []);
+          // Self-contained chip styling — reuses CSS vars from the admin
+          // theme so it reads consistent with the rest of the drawer. The
+          // :has(input:checked) rule gives the active state without any
+          // JS re-bind.
+          const badgeStyles = `
+            <style>
+              #pf-badges { --chip-radius: 999px; }
+              #pf-badges .badge-chip { position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: var(--chip-radius); background: var(--surface); border: 1px solid var(--line-2); color: var(--ink-2); cursor: pointer; user-select: none; font-size: var(--fs-sm); font-weight: 600; transition: background 140ms, border-color 140ms, color 140ms; }
+              #pf-badges .badge-chip input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+              #pf-badges .badge-chip::before { content: ''; width: 13px; height: 13px; border: 1.5px solid var(--line-2); border-radius: 50%; background: var(--surface); flex-shrink: 0; transition: background 140ms, border-color 140ms; }
+              #pf-badges .badge-chip:hover { border-color: var(--ink-3); color: var(--ink); }
+              #pf-badges .badge-chip:has(input:checked) { background: var(--pri); border-color: var(--pri); color: var(--on-pri); }
+              #pf-badges .badge-chip:has(input:checked)::before { background: var(--on-pri); border-color: var(--on-pri); box-shadow: inset 0 0 0 3px var(--pri); }
+            </style>`;
+          const chips = BADGE_OPTIONS.map(([val, lbl]) => `<label class="badge-chip"><input type="checkbox" name="pf-badge" value="${esc(val)}"${pickedBadges.has(val) ? ' checked' : ''}><span>${esc(lbl)}</span></label>`).join('');
+          return f('Badges', 'pf-badges', `<div id="pf-badges" style="display:flex;flex-wrap:wrap;gap:6px">${badgeStyles}${chips}</div>`, 'Ribbons shown on product cards and the PDP. Multiple allowed.', true);
+        })()}
+        </div></div>
       <div class="d-sec"><h3>Colour variants and stock <button type="button" class="btn btn-sec btn-sm" data-act="addVariant">${icon('plus')}Add colour</button></h3>
-        <p class="small muted" style="margin:-2px 0 10px">Stock is read-only here. Every piece is barcoded; add stock through <b>Receive stock</b> on each row.</p>
+        <p class="small muted" style="margin:-2px 0 10px">Stock is read-only here. Every piece is barcoded; add stock through <b>Receive stock</b> on each row. Images below each variant are shown on the storefront when that colour is picked.</p>
         <table class="t"><thead><tr><th><span style="padding-left:0">Colour</span></th>${c.sized ? '<th><span>Size</span></th>' : ''}<th><span>SKU</span></th><th class="r"><span>In stock</span></th><th></th></tr></thead><tbody>
-        ${p.variants.map((v, i) => `<tr><td style="padding-left:0"><span class="who">${swv(v, p)}<span>${esc(v.colour)}</span></span></td>${c.sized ? `<td>${esc(v.size || '—')}</td>` : ''}<td class="muted">${esc(v.sku || 'Assigned on save')}</td><td class="r"><span class="strong">${nf.format(v.stock || 0)}</span></td><td class="r" style="padding-right:0"><button type="button" class="btn btn-sec btn-sm" data-act="receiveStock" data-i="${i}" ${v.sku ? '' : 'disabled title="Save the product first to assign a SKU"'}>Receive stock</button>${p.variants.length > 1 ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeVariant" data-i="${i}" aria-label="Remove ${esc(v.colour)}">${icon('x', 14)}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
-      ${c.saree ? `<div class="d-sec"><h3>Weave and zari panel</h3><div class="form-grid">
-        ${f('Fabric', 'pf-fabric', inp('pf-fabric', p.fabric))}${f('Zari', 'pf-zari', sel('pf-zari', ['Pure zari', 'Tested zari', 'No zari'], p.zari || 'No zari'))}
-        ${f('Border', 'pf-border', sel('pf-border', BORDERS, p.border || 'No border'))}${f('Blouse piece', 'pf-blouse', sel('pf-blouse', [['yes', 'Included, offer stitching'], ['no', 'Not included']], p.blousePiece ? 'yes' : 'no'), 'Stitching is offered at checkout only when included')}
-        ${f('Saree length', 'pf-length', inp('pf-length', p.length))}${f('Saree width', 'pf-width', inp('pf-width', p.width))}
-        ${f('Model height', 'pf-model', inp('pf-model', p.modelHeight))}${f('Drape style shown', 'pf-drape', sel('pf-drape', ['Nivi', 'Bengali', 'Gujarati', 'Maharashtrian'], p.drapeStyle || 'Nivi'))}</div></div>` : ''}
-      <div class="d-sec"><h3>Fabric, care and colour</h3><div class="form-grid">
-        ${f('Care instructions', 'pf-care', `<textarea class="ctl" id="pf-care">${esc(p.care)}</textarea>`, '', true)}
-        ${f('Colour accuracy note', 'pf-colnote', `<textarea class="ctl" id="pf-colnote">${esc(p.colourNote)}</textarea>`, 'Shown beside the gallery', true)}</div></div>
+        ${p.variants.map((v, i) => {
+          // Source of truth = barcoded pieces (matches Inventory page). The
+          // stale v.stock field on the product doc is ignored — it never
+          // gets rewritten when pieces are received/shipped, which was why
+          // this drawer always showed 0.
+          const liveStock = piecesOf(v.id, 'In stock').length;
+          const colSpan = 4 + (c.sized ? 1 : 0);
+          const vImages = Array.isArray(v.imageUrls) ? v.imageUrls : [];
+          // Per-variant image strip: thumbnails + "Add images" trigger. Lives
+          // in a sub-row that spans the whole variant table so the thumbs
+          // don't get squeezed into the Colour column. File input id includes
+          // the variant index so the change handler in App.jsx can route
+          // uploads to the right variant.
+          const imagesRow = `<tr><td colspan="${colSpan}" style="padding-left:0;background:var(--tint)">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span class="small muted" style="margin-right:4px">Images for ${esc(v.colour)}:</span>
+              ${vImages.map((url, j) => `<span style="position:relative;display:inline-block"><img src="${esc(url)}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:4px;border:1px solid var(--line);display:block"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeVariantImage" data-i="${i}" data-j="${j}" aria-label="Remove image ${j + 1}" style="position:absolute;top:-6px;right:-6px;background:var(--bg);border:1px solid var(--line);border-radius:999px;width:18px;height:18px;line-height:14px;padding:0">×</button></span>`).join('')}
+              <label class="btn btn-sec btn-sm" for="pf-vimg-${i}">${icon('plus', 14)}${vImages.length ? 'Add more' : 'Add images'}</label>
+              <input type="file" id="pf-vimg-${i}" accept="image/*" multiple hidden data-vimg-i="${i}">
+            </div>
+          </td></tr>`;
+          return `<tr><td style="padding-left:0"><span class="who">${swv(v, p)}<span>${esc(v.colour)}</span></span></td>${c.sized ? `<td>${esc(v.size || '—')}</td>` : ''}<td class="muted">${esc(v.sku || 'Assigned on save')}</td><td class="r"><span class="strong">${nf.format(liveStock)}</span></td><td class="r" style="padding-right:0"><button type="button" class="btn btn-sec btn-sm" data-act="receiveStock" data-i="${i}" ${v.sku ? '' : 'disabled title="Save the product first to assign a SKU"'}>Receive stock</button>${p.variants.length > 1 ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeVariant" data-i="${i}" aria-label="Remove ${esc(v.colour)}">${icon('x', 14)}</button>` : ''}</td></tr>${imagesRow}`;
+        }).join('')}</tbody></table></div>
+      ${c.saree ? `<div class="d-sec"><h3>Craft &amp; material</h3><div class="form-grid">
+        ${f('Zari', 'pf-zari', sel('pf-zari', ['Pure zari', 'Tested zari', 'No zari'], p.zari || 'No zari'))}
+        ${f('Blouse piece', 'pf-blouse', sel('pf-blouse', [['yes', 'Included, offer stitching'], ['no', 'Not included']], p.blousePiece ? 'yes' : 'no'), 'Stitching is offered at checkout only when included')}
+        ${f('Saree length', 'pf-length', inp('pf-length', p.length))}
+        ${f('Blouse length', 'pf-blouseLength', inp('pf-blouseLength', p.blouseLength, 'For example: 0.8 m'), 'Shown on the PDP next to the attached blouse note.')}</div></div>` : ''}
+      <div class="d-sec"><h3>Product details (shown on the PDP)</h3><div class="form-grid">
+        ${f('Style number', 'pf-styleNo', inp('pf-styleNo', p.styleNo, 'For example: SR-1001'), 'Shown under "Style No" on the Identity card. Leave blank to use the product id.')}
+        ${f('Design number', 'pf-designNo', inp('pf-designNo', p.designNo, 'For example: KP1046900'), 'Shown under "Design No" on the Identity card.')}
+        ${f('Colour name', 'pf-colourLabel', inp('pf-colourLabel', p.colourLabel, 'For example: Peacock Blue'), 'Shown under "Color" on the Identity card. Leave blank to show the hex code.')}
+        ${f('Pack contains', 'pf-packContains', inp('pf-packContains', p.packContains, 'For example: 1 Saree, 1 Unstitched Blouse Fabric'), 'Shown under "Pack Contains" on the Pack & Provenance card.')}
+        ${f('Manufactured by', 'pf-manufacturedBy', inp('pf-manufacturedBy', p.manufacturedBy, 'For example: House Of GnanRudh Pvt Ltd, Nellore'), 'Shown under "Manufactured" on the Pack & Provenance card.', true)}</div></div>
+      <div class="d-sec"><h3>PDP tab copy</h3><div class="form-grid">
+        ${f('Product Speciality', 'pf-speciality', `<textarea class="ctl" id="pf-speciality" placeholder="Short italic paragraph. Rendered on the Product Speciality tab.">${esc(p.speciality || '')}</textarea>`, 'Empty = the Product Speciality tab shows a placeholder, not the colour / care note.', true)}
+        ${f('Style tip', 'pf-styleTip', `<textarea class="ctl" id="pf-styleTip" placeholder="How to style this saree — jewellery, blouse, occasion cues.">${esc(p.styleTip || '')}</textarea>`, 'Left column of the Style & Fit Tips tab.')}
+        ${f('Fit tip', 'pf-fitTip', `<textarea class="ctl" id="pf-fitTip" placeholder="How to drape and fit this saree — pleats, pallu, petticoat.">${esc(p.fitTip || '')}</textarea>`, 'Right column of the Style & Fit Tips tab.')}
+        ${f('Shipping & returns note', 'pf-shippingNote', `<textarea class="ctl" id="pf-shippingNote" placeholder="One or two paragraphs. Returns policy link renders below automatically.">${esc(p.shippingNote || '')}</textarea>`, 'Rendered on the Shipping & Returns tab. Leave blank to show a placeholder on the PDP.', true)}</div></div>
+      <div class="d-sec"><h3>FAQs <button type="button" class="btn btn-sec btn-sm" data-act="addFaq">${icon('plus')}Add FAQ</button></h3>
+        <p class="small muted" style="margin:-2px 0 10px">Rendered on the storefront PDP's FAQs tab in the order below. Leave blank to show the shipped default FAQs.</p>
+        ${(Array.isArray(p.faqs) ? p.faqs : []).map((faq, i) => `<div class="setrow" style="align-items:flex-start;gap:8px;margin-bottom:12px">
+          <div class="field" style="flex:1 1 auto">
+            <label for="pf-faq-q-${i}">Question ${i + 1}</label>
+            <input class="ctl" id="pf-faq-q-${i}" data-faq-q="${i}" value="${esc(faq.q || '')}" placeholder="For example: Will I receive a quality product?">
+            <label for="pf-faq-a-${i}" style="margin-top:8px">Answer</label>
+            <textarea class="ctl" id="pf-faq-a-${i}" data-faq-a="${i}" placeholder="Short, direct answer. One or two sentences.">${esc(faq.a || '')}</textarea>
+          </div>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeFaq" data-i="${i}" aria-label="Remove FAQ ${i + 1}" style="margin-top:28px">${icon('x', 14)}</button>
+        </div>`).join('') || '<p class="small muted">No FAQs added yet. Click <b>Add FAQ</b> to write your first one, or leave empty to use the shipped defaults.</p>'}
+      </div>
       ${(() => {
         const rec = computeGstRate(p.hsn, p.price);
         const hasOverride = p.gst !== '' && p.gst != null;

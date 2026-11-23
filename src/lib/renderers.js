@@ -21,13 +21,24 @@ export const swv = (v, p, size = 'sm') => {
   const vv = v || { hex: q.hex, colour: '' };
   return `<span class="sw ${size}" style="--b:${vv.hex};--z:${q.zariHex}" title="${esc(vv.colour)}" aria-hidden="true"></span>`;
 };
-// If `variant` is supplied, the swatch uses THAT variant's colour (so a Teal
-// piece shows teal) instead of the product's first-variant default (so a Teal
-// piece of a product whose first variant was Maroon doesn't render as maroon).
+// Prefer the product's first uploaded image; fall back to the colour swatch
+// so the row/drawer still has a visual when no image has been added yet.
+export const thumb = (p, size = '') => {
+  const url = p?.imageUrls?.[0];
+  if (!url) return sw(p, size);
+  return `<span class="sw ${size}" style="background:url('${esc(url)}') center/cover no-repeat" aria-hidden="true"></span>`;
+};
+// Product thumbnail prefers the admin-uploaded image so inventory/orders/
+// packing lists match what visitors see on the storefront. The `variant`
+// argument only matters as a last-resort colour swatch when the product
+// has no uploaded image yet — in that case we prefer the variant's hex
+// over the product's first-variant default (so a Teal piece of a product
+// whose first variant was Maroon doesn't render as maroon).
 export const prodCell = (p, extra = '', variant = null) => {
   const q = p || MISSING;
   const catName = q.cat && CAT[q.cat] ? CAT[q.cat].name : (p ? '—' : 'Removed from catalogue');
-  const swatch = variant ? swv(variant, q) : sw(q);
+  const hasImage = Boolean(q?.imageUrls?.[0]);
+  const swatch = hasImage ? thumb(q) : (variant ? swv(variant, q) : sw(q));
   return `<div class="prod">${swatch}<span><b>${esc(q.name)}</b><span class="sub">${esc(catName)}${extra}</span></span></div>`;
 };
 export const variantOf = (it) => {
