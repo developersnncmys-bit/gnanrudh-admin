@@ -128,18 +128,61 @@ export function downloadCSV(name, rows) {
     toast(`Downloaded ${name} with ${plural(rows.length - 1, 'row')}. It opens in Excel.`);
   } catch { toast('Your browser blocked the download. Open the admin in its own tab and try again.'); }
 }
+// Every lookup below is null-safe. Storefront orders often reference
+// a customer the admin hasn't bootstrapped yet, and legacy orders may
+// point at deleted products — a bare `CUST[cid].name` on either would
+// throw before the download ever started, which is why the Export CSV
+// button looked dead for admins with any storefront activity.
 const EXPORTS = {
-  orders: (list) => [['Order', 'Date', 'Customer', 'Phone', 'City', 'State', 'Pincode', 'Items', 'Payment method', 'Payment status', 'Razorpay ID', 'Total', 'Status', 'Courier', 'AWB', 'Invoice'], ...list.map((o) => { const c = CUST[o.cid]; return [o.id, fmtD(o.placed), c.name, c.phone, c.city, c.state, o.ship.pin, o.items.map((it) => `${PROD[it.pid].name} (${variantOf(it).colour})`).join('; '), o.payment.method, o.payment.status, o.payment.rzp || '', o.total, o.status, o.ship.courier || '', o.ship.awb || '', o.invoice || '']; })],
-  customers: (list) => [['Name', 'Phone', 'Email', 'City', 'State', 'Segment', 'Orders', 'Lifetime value', 'Last purchase', 'Weaves bought', 'Occasions', 'Measurement profiles', 'Notes'], ...list.map((c) => [c.name, c.phone, c.email, c.city, c.state, c.segment, c.orderCount, c.ltv, c.lastOrder ? fmtD(c.lastOrder) : '', c.weaves.join('; '), c.occasions.join('; '), c.profiles.map((p) => p.who).join('; '), c.notes.map((n) => n.text).join('; ')])],
-  products: (list) => [['Name', 'Category', 'Weave', 'Colour', 'Size', 'SKU', 'Stock', 'Price', 'HSN', 'GST %', 'Status'], ...list.flatMap((p) => p.variants.map((v) => [p.name, CAT[p.cat].name, p.weave, v.colour, v.size || '', v.sku, v.stock, p.price, p.hsn, p.gst, p.status]))],
+  orders: (list) => [
+    ['Order', 'Date', 'Customer', 'Phone', 'City', 'State', 'Pincode', 'Items', 'Payment method', 'Payment status', 'Razorpay ID', 'Total', 'Status', 'Courier', 'AWB', 'Invoice'],
+    ...list.map((o) => {
+      const c = CUST[o.cid] || {};
+      const items = (o.items || []).map((it) => {
+        const p = PROD[it.pid];
+        const v = variantOf(it);
+        const name = p?.name || `Deleted product (${it.pid})`;
+        const colour = v?.colour || '—';
+        return `${name} (${colour})`;
+      }).join('; ');
+      return [
+        o.id,
+        fmtD(o.placed),
+        c.name || 'Guest',
+        c.phone || '',
+        c.city || '',
+        c.state || '',
+        o.ship?.pin || '',
+        items,
+        o.payment?.method || '',
+        o.payment?.status || '',
+        o.payment?.rzp || '',
+        o.total,
+        o.status,
+        o.ship?.courier || '',
+        o.ship?.awb || '',
+        o.invoice || '',
+      ];
+    }),
+  ],
+  customers: (list) => [['Name', 'Phone', 'Email', 'City', 'State', 'Segment', 'Orders', 'Lifetime value', 'Last purchase', 'Weaves bought', 'Occasions', 'Measurement profiles', 'Notes'], ...list.map((c) => [c.name, c.phone || '', c.email || '', c.city || '', c.state || '', c.segment || '', c.orderCount || 0, c.ltv || 0, c.lastOrder ? fmtD(c.lastOrder) : '', (c.weaves || []).join('; '), (c.occasions || []).join('; '), (c.profiles || []).map((p) => p.who).join('; '), (c.notes || []).map((n) => n.text).join('; ')])],
+  products: (list) => [['Name', 'Category', 'Weave', 'Colour', 'Size', 'SKU', 'Stock', 'Price', 'HSN', 'GST %', 'Status'], ...list.flatMap((p) => (p.variants || []).map((v) => [p.name, CAT[p.cat]?.name || '—', p.weave, v.colour, v.size || '', v.sku, v.stock, p.price, p.hsn, p.gst, p.status]))],
 };
 const LIST_SRC = { orders: () => orders, customers: () => customers, products: () => products };
 const BYID = { orders: ORD, customers: CUST, products: PROD };
 function exportList(route, listId, onlySelected) {
   const target = listId || route;
+  if (!EXPORTS[target]) { toast(`No CSV export defined for ${target}.`); return; }
   const ids = onlySelected ? lvSelected(target) : null;
-  const rows = ids ? ids.map((id) => BYID[target][id]) : (LV[target]?.visible || LIST_SRC[target]());
-  downloadCSV(`${target}-${iso(TODAY)}.csv`, EXPORTS[target](rows));
+  const source = ids ? ids.map((id) => BYID[target][id]).filter(Boolean) : (LV[target]?.visible || LIST_SRC[target]());
+  // Surface any row-builder crash as a toast instead of a silent click.
+  // The downloadCSV try/catch only covers Blob/URL failures, not the
+  // generator itself — so any lookup bug in EXPORTS[target] used to look
+  // like the button did nothing.
+  let rows;
+  try { rows = EXPORTS[target](source); }
+  catch (e) { toast(`Export failed: ${e.message}`); console.error('[export]', e); return; }
+  downloadCSV(`${target}-${iso(TODAY)}.csv`, rows);
 }
 
 const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
@@ -183,7 +226,13 @@ function saveProduct(publish, rerender) {
   if (p.cat === 'acc' && p.price > 3000) warns.push(`Accessory priced at ${inr(p.price)} is above the usual Rs. 3,000 ceiling for this category.`);
   else if (Array.isArray(catRange) && catRange[1] > 0 && (p.price < catRange[0] || p.price > catRange[1])) warns.push(`Price ${inr(p.price)} falls outside the usual ${inr(catRange[0])}–${inr(catRange[1])} range for ${CAT[p.cat]?.name}.`);
   if (warns.length) toast(`Saved. Heads up: ${warns.join(' ')}`);
-  if (publish) p.status = 'Active';
+  // Respect the Status dropdown. Previously this line forced status to
+  // 'Active' on every save, so picking Hidden/Draft in the dropdown had
+  // no effect — the product was always published. Now the dropdown is the
+  // single source of truth; we only default to 'Active' when creating a
+  // brand-new product with no status chosen so the button still
+  // publishes out of the box.
+  if (publish && !p.status) p.status = 'Active';
   p.hex = p.variants[0].hex;
   p.zariHex = p.zari === 'Pure zari' ? '#c9a227' : p.zari === 'Tested zari' ? '#b9a26a' : '#d8cfbf';
   const wasNew = p.id === 'new';
@@ -201,7 +250,16 @@ function saveProduct(publish, rerender) {
   } else Object.assign(PROD[p.id], p);
   PROD[p.id].variants.forEach((v, i) => { if (!v.sku) v.sku = `${p.cat.slice(0, 3).toUpperCase()}-${p.id.slice(1)}${i}`; });
   closeDrawer(); rerender();
-  toast(publish ? `“${p.name}” is live on the store.` : `“${p.name}” saved${p.status === 'Active' ? ' and updated on the store' : ' as a draft'}.`);
+  // Toast reflects the actual saved status instead of assuming publish =
+  // Active. Hidden / Draft saves get an honest message so staff know the
+  // storefront won't show the product.
+  toast(
+    p.status === 'Active'
+      ? `“${p.name}” is live on the store.`
+      : p.status === 'Hidden'
+        ? `“${p.name}” saved as hidden — not shown on the store.`
+        : `“${p.name}” saved as a draft.`,
+  );
   // INV-02: strip variant.stock from the payload so the client can't dictate stock.
   // Stock is derived from pieces; the backend treats the field as read-only.
   const payload = { ...p };
@@ -351,7 +409,17 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const ready = settingsReady(SETTINGS);
       if (!ready.ok) return toast(`Fix your seller details on Settings first: ${ready.issues[0]}.`);
       const o = ORD[el.dataset.id];
-      openDoc(`Tax invoice ${o.invoice}`, docInvoice(o) + (o.creditNote ? docInvoice(o, true) : ''));
+      if (!o) return toast(`Order ${el.dataset.id} not found in the local cache.`);
+      // Surface any downstream throw (missing customer / product / variant
+      // in docInvoice, blocked popup in openDoc) as a visible toast
+      // instead of a silent click — prior behaviour was "button does
+      // nothing" with the real error only in the dev console.
+      try {
+        openDoc(`Tax invoice ${o.invoice}`, docInvoice(o) + (o.creditNote ? docInvoice(o, true) : ''));
+      } catch (e) {
+        toast(`Could not open invoice: ${e.message}`);
+        console.error('[invoice]', e);
+      }
     },
     generateInvoice: async (el) => {
       const id = el.dataset.id;
@@ -380,7 +448,84 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     },
     printDoc: () => window.print(),
     closeDoc: () => document.getElementById('docDlg').close(),
+    // Manual payment-status change — a lightweight correction tool, no
+    // side effects on reservation / label / invoice. Handy when the
+    // Razorpay webhook gets stuck, a COD outcome needs updating by the
+    // dispatch team, or a refund is reconciled offline. For the full
+    // "I collected the payment now cut a label" flow, use
+    // `markPaymentReceived` instead.
+    changePaymentStatus: async (el) => {
+      const id = el.dataset.id;
+      const o = ORD[id]; if (!o) return;
+      // Forward-only transition map. Once money has actually moved
+      // (Paid, COD collected) you can only move it on to Refunded —
+      // never back to a pre-settlement label. Refunded and COD not
+      // collected are terminal. Keeps the Payments filter honest and
+      // prevents admins from quietly reopening a closed ledger entry.
+      const TRANSITIONS = {
+        'Pending': ['Paid', 'COD pending', 'COD collected'],
+        'COD pending': ['COD collected', 'COD not collected'],
+        'Paid': ['Refunded'],
+        'COD collected': ['Refunded'],
+        'COD not collected': [],
+        'Refunded': [],
+      };
+      const current = o.payment?.status || 'Pending';
+      const nextOptions = TRANSITIONS[current] || [];
+      if (!nextOptions.length) {
+        return toast(`${current} is a final payment state — it can't be changed.`);
+      }
+      const v = await ask({
+        title: `Change payment status — ${id}`,
+        text: `Current status is ${current}. Payment state only moves forward: once an order is Paid or COD collected it can only be Refunded, never set back to Pending.`,
+        ok: 'Update status',
+        fields: [
+          { id: 's', label: 'New payment status', type: 'select', options: nextOptions, value: nextOptions[0] },
+          { id: 'ref', label: 'Reference (UPI VPA, receipt no, …) — optional', value: '' },
+        ],
+      });
+      if (!v) return;
+      if (v.s === o.payment?.status && !v.ref?.trim()) return;
+      if (!o.payment) o.payment = {};
+      const was = o.payment.status;
+      o.payment.status = v.s;
+      if (v.ref?.trim() && !o.payment.rzp) o.payment.rzp = v.ref.trim();
+      toast(`Payment status changed from ${was || '—'} to ${v.s}.`);
+      orderDrawer(o.id); renderPage(); renderNav();
+      sync(api.orders.setPaymentStatus(o.id, v.s, v.ref?.trim() || undefined).then((srv) => {
+        Object.assign(o, srv); o.id = srv._id || o.id;
+      }), 'change payment status');
+    },
     checkPayment: (el) => { const o = ORD[el.dataset.id]; o.payment.status = 'Paid'; o.status = 'Label generated'; o.ship.courier = pick(COURIERS); o.ship.awb = `${between(10000000, 99999999)}11`; shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'Order pushed', at: new Date().toISOString(), courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' }); if (!o.invoice) o.invoice = `${SETTINGS.gst.inv}${String(bumpInv()).padStart(4, '0')}`; toast('Razorpay confirmed the payment. Pushed to Shiprocket and a label generated.'); orderDrawer(o.id); renderPage(); renderNav(); sync(api.orders.confirmPayment(o.id).then((srv) => { Object.assign(o, srv); o.id = srv._id || o.id; }), 'confirm payment'); },
+    // Admin-driven payment confirmation for walk-in / manual orders, or
+    // when the Razorpay webhook is late. Mirrors the server's confirmPayment
+    // flow so the UI paints the paid state instantly and we reconcile with
+    // whatever the server returns.
+    markPaymentReceived: async (el) => {
+      const id = el.dataset.id;
+      const o = ORD[id]; if (!o) return;
+      const isCod = o.payment?.method === 'Cash on delivery';
+      const v = await ask({
+        title: `Mark ${id} as paid?`,
+        text: isCod
+          ? 'This records that cash was collected on delivery. The order moves to Label generated and a Shiprocket label is cut. Use this for walk-in COD confirmations or when the courier reports collection.'
+          : 'This records the payment as received. The order moves to Label generated, a Shiprocket label is cut and the tax invoice is issued. Use this for walk-in orders paid in store or when the Razorpay webhook is late.',
+        ok: 'Mark paid',
+        fields: [{ id: 'ref', label: 'Reference (UPI VPA, receipt no, etc.) — optional', value: '' }],
+      });
+      if (!v) return;
+      // Optimistic local update — same transitions the server performs.
+      o.payment.status = isCod ? 'COD collected' : 'Paid';
+      if (v.ref?.trim() && !o.payment.rzp) o.payment.rzp = v.ref.trim();
+      o.status = 'Label generated';
+      o.ship.courier = o.ship.courier || pick(COURIERS);
+      o.ship.awb = o.ship.awb || `${between(10000000, 99999999)}11`;
+      shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'Order pushed', at: new Date().toISOString(), courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' });
+      if (!o.invoice) o.invoice = `${SETTINGS.gst.inv}${String(bumpInv()).padStart(4, '0')}`;
+      toast(isCod ? 'COD recorded as collected. Label generated.' : 'Payment recorded as received. Label generated.');
+      orderDrawer(o.id); renderPage(); renderNav();
+      sync(api.orders.confirmPayment(o.id).then((srv) => { Object.assign(o, srv); o.id = srv._id || o.id; }), 'mark payment received');
+    },
     cancelOrder: async (el) => { const ok = await ask({ title: `Cancel ${el.dataset.id}?`, text: 'The customer is told by email. If Razorpay later confirms the payment, it is refunded automatically.', ok: 'Cancel order', danger: true }); if (!ok) return; const id = el.dataset.id; ORD[id].status = 'Cancelled'; toast('Order cancelled.'); closeDrawer(); rerender(); sync(api.orders.cancel(id), 'cancel order'); },
     ndrReattempt: (el) => { const o = ORD[el.dataset.id]; o.status = 'In transit'; o.ndr = null; shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'NDR action sent: reattempt', at: new Date().toISOString(), courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' }); toast('Reattempt requested through Shiprocket.'); orderDrawer(o.id); renderPage(); renderNav(); sync(api.orders.ndr(o.id, { action: 'reattempt' }), 'request reattempt'); },
     ndrAddress: async (el) => { const o = ORD[el.dataset.id]; const v = await ask({ title: 'Update delivery address', ok: 'Send to Shiprocket', fields: [{ id: 'a', label: 'Address', type: 'area', required: true }, { id: 'pin', label: 'Pincode', value: o.ship.pin, required: true }, { id: 'p', label: 'Phone for the courier', value: CUST[o.cid].phone }] }); if (!v) return; if (!/^\d{6}$/.test(v.pin)) return toast('That pincode isn’t 6 digits. Nothing was sent.'); o.ship.pin = v.pin; o.status = 'In transit'; o.ndr = null; shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'NDR action sent: new address', at: new Date().toISOString(), courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' }); toast('Address updated with the courier through Shiprocket.'); orderDrawer(o.id); renderPage(); renderNav(); sync(api.orders.ndr(o.id, { action: 'address', pin: v.pin, address: v.a, phone: v.p }), 'update address'); },

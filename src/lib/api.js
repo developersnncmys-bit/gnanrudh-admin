@@ -217,6 +217,7 @@ export const api = {
     update: (id, p) => patch(`/orders/${id}`, p),
     generateInvoice: (id) => post(`/orders/${id}/invoice`),
     confirmPayment: (id) => post(`/orders/${id}/confirm-payment`),
+    setPaymentStatus: (id, status, ref) => post(`/orders/${id}/payment-status`, { status, ref }),
     cancel: (id) => post(`/orders/${id}/cancel`),
     ship: (id) => post(`/orders/${id}/ship`),
     ndr: (id, body) => post(`/orders/${id}/ndr`, body),

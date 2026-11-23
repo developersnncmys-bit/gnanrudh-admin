@@ -52,7 +52,13 @@ function amountInWords(amount) {
 const stateCode = (gstin) => (gstin && gstin.length >= 2 ? gstin.slice(0, 2) : '');
 
 export function docInvoice(o, credit = false) {
-  const c = CUST[o.cid];
+  // Null-safe lookups. Storefront orders often reference a customer the
+  // admin's local CUST cache hasn't picked up yet (bootstrap ran before
+  // the signup); old orders can also point at deleted products or
+  // removed variants. A bare `c.state` or `p.hsn` on either threw and
+  // the invoice action, having no try/catch, failed silently — which is
+  // what made the Tax invoice button look dead.
+  const c = CUST[o.cid] || { name: 'Guest', state: '', city: '', phone: '', email: '' };
   const intra = c.state === STORE_STATE;
   const scale = o.sub ? o.total / o.sub : 1;
   const no = credit ? o.creditNote : o.invoice;
@@ -61,9 +67,9 @@ export function docInvoice(o, credit = false) {
   const paid = o.payment && o.payment.status === 'Paid';
   const S = SETTINGS;
 
-  const items = o.items.map((it) => {
-    const p = PROD[it.pid];
-    const v = variantOf(it);
+  const items = (o.items || []).map((it) => {
+    const p = PROD[it.pid] || { name: 'Product removed', hsn: '', gst: 0, weave: '' };
+    const v = variantOf(it) || { colour: 'variant removed', sku: it.vid || '', size: null };
     const gross = it.price * it.qty * scale;
     // TAX-02: compute rate from HSN + per-unit price. Fall back to the product's
     // stored gst when HSN isn't recognised; the admin product form warns if the

@@ -51,7 +51,15 @@ export function orderDrawer(id) {
   if (!c) return notFoundDrawer('Customer for order ' + id, o.cid);
   const g = gstLines(o);
   const actions = {
-    'Payment pending': [['cancelOrder', 'Cancel order', 'btn-bad'], ['checkPayment', 'Check with Razorpay', 'btn-sec']],
+    'Payment pending': [
+      ['cancelOrder', 'Cancel order', 'btn-bad'],
+      // Walk-in / manual orders need an explicit "received the cash/UPI"
+      // button — Razorpay confirmation never fires for them. Prepaid
+      // orders can still fall back to the Razorpay check if the webhook
+      // is late, which is why both buttons are shown.
+      ['markPaymentReceived', 'Mark payment received', 'btn-pri'],
+      ['checkPayment', 'Check with Razorpay', 'btn-sec'],
+    ],
     'Label generated': [['printLabel', 'Print label', 'btn-sec']],
     'Delivery failed': [['ndrRto', 'Return to origin', 'btn-bad'], ['ndrAddress', 'Update address', 'btn-pri']],
     Delivered: o.payment.method !== 'Cash on delivery' && o.payment.status === 'Paid' ? [['refundOrder', 'Refund', 'btn-sec']] : [],
@@ -85,7 +93,7 @@ export function orderDrawer(id) {
       : (['Paid', 'COD collected'].includes(o.payment.status)
           ? `<button type="button" class="btn btn-sec" data-act="generateInvoice" data-id="${o.id}" style="margin-right:auto">${icon('plus')}Generate tax invoice</button>`
           : `<button type="button" class="btn btn-ghost" data-act="invoice" data-id="${o.id}" style="margin-right:auto" disabled>${icon('dl')}Tax invoice</button>`)
-    }${actions.map(([a, l, cls]) => `<button type="button" class="btn ${cls}" data-act="${a}" data-id="${o.id}">${esc(l)}</button>`).join('')}</div>`);
+    }<button type="button" class="btn btn-sec" data-act="changePaymentStatus" data-id="${o.id}">${icon('edit', 14)}Change payment status</button>${actions.map(([a, l, cls]) => `<button type="button" class="btn ${cls}" data-act="${a}" data-id="${o.id}">${esc(l)}</button>`).join('')}</div>`);
 }
 
 /* ---------- NEW MANUAL ORDER ---------- */
