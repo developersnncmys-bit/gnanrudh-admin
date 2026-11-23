@@ -251,7 +251,8 @@ export function docInvoice(o, credit = false) {
 export function docPackSlip(o) {
   const c = CUST[o.cid];
   const rows = o.items.map((it) => {
-    const p = PROD[it.pid]; const v = variantOf(it);
+    const p = PROD[it.pid] || { name: 'Product removed' };
+    const v = variantOf(it) || { colour: 'variant removed', sku: it.vid || '', size: null };
     return `<tr>
       <td>☐</td>
       <td>${esc(p.name)}${it.stitch ? `<br><span class="doc-lbl" style="display:inline">With stitched blouse for ${esc(it.stitch.profile)}</span>` : ''}</td>

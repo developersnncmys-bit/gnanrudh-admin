@@ -83,7 +83,7 @@ export function hbars(rows, { fmt = (v) => nf.format(v), tone = '' } = {}) {
 /* Generic listView used by multiple pages. Keeps its state on the exported LV object. */
 export const LV = {};
 export function listView(id, cfg) {
-  const s = LV[id] ||= { tab: cfg.tabs?.[0]?.id, q: '', sort: cfg.sort || null, sel: new Set(), f: {} };
+  const s = LV[id] ||= { tab: cfg.tabs?.[0]?.id, q: '', sort: cfg.sort || null, sel: new Set(), f: {}, page: 0 };
   if (cfg.tabs && !cfg.tabs.some((t) => t.id === s.tab)) s.tab = cfg.tabs[0].id;
   let rows = cfg.rows;
   const tab = cfg.tabs?.find((t) => t.id === s.tab);
@@ -95,9 +95,22 @@ export function listView(id, cfg) {
     if (col) { const g = col.sort === true ? (r) => r[col.key] : col.sort; const d = s.sort.dir === 'desc' ? -1 : 1; rows = [...rows].sort((a, b) => { const x = g(a), y = g(b); return x > y ? d : x < y ? -d : 0; }); }
   }
   s.visible = rows;
-  const visibleIds = rows.map((r) => r.id);
-  [...s.sel].forEach((x) => { if (!visibleIds.includes(x)) s.sel.delete(x); });
-  const allSel = rows.length > 0 && rows.every((r) => s.sel.has(r.id));
+  // Pagination is opt-in via cfg.pageSize. Without it the full filtered set
+  // renders (prior behaviour). When set, clamp s.page so filter/search
+  // tightening the result doesn't leave the user on an empty page.
+  const totalRows = rows.length;
+  const pageSize = Number(cfg.pageSize) || 0;
+  const pageCount = pageSize > 0 ? Math.max(1, Math.ceil(totalRows / pageSize)) : 1;
+  if (s.page == null || s.page < 0) s.page = 0;
+  if (s.page > pageCount - 1) s.page = pageCount - 1;
+  const pageStart = pageSize > 0 ? s.page * pageSize : 0;
+  const pageRows = pageSize > 0 ? rows.slice(pageStart, pageStart + pageSize) : rows;
+  const visibleIds = pageRows.map((r) => r.id);
+  // Clear selections that aren't in the overall filtered set (not just the
+  // current page) so navigating between pages doesn't drop earlier picks.
+  const filteredIds = new Set(rows.map((r) => r.id));
+  [...s.sel].forEach((x) => { if (!filteredIds.has(x)) s.sel.delete(x); });
+  const allSel = pageRows.length > 0 && pageRows.every((r) => s.sel.has(r.id));
   const tabs = cfg.tabs ? `<div class="tabs" role="tablist">${cfg.tabs.map((t) => { const n = cfg.rows.filter(t.filter || (() => true)).length; return `<button type="button" role="tab" class="tab" aria-selected="${t.id === s.tab}" data-lv="${id}" data-lv-tab="${t.id}">${esc(t.label)}${t.count === false ? '' : `<span class="n${t.hot && n ? ' hot' : ''}">${nf.format(n)}</span>`}</button>`; }).join('')}</div>` : '';
   const sortIco = (d) => `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="m7 9 5-5 5 5" opacity="${d === 'asc' ? 1 : .3}"/><path d="m7 15 5 5 5-5" opacity="${d === 'desc' ? 1 : .3}"/></svg>`;
   const tabNote = tab?.note ? `<div class="note n-info" style="margin:12px 20px 0">${tab.note}</div>` : '';
@@ -110,9 +123,22 @@ export function listView(id, cfg) {
       ${cfg.bulk ? `<th class="chk"><span><input type="checkbox" aria-label="Select all" data-lv="${id}" data-lv-all ${allSel ? 'checked' : ''}></span></th>` : ''}
       ${cfg.columns.map((c) => { const on = s.sort?.key === c.key; return `<th class="${c.align === 'r' ? 'r' : ''}"${on ? ` aria-sort="${s.sort.dir === 'asc' ? 'ascending' : 'descending'}"` : ''}>${c.sort ? `<button type="button" class="${on ? 'on' : ''}" data-lv="${id}" data-lv-sort="${c.key}">${esc(c.label)}${sortIco(on ? s.sort.dir : null)}</button>` : `<span>${esc(c.label)}</span>`}</th>`; }).join('')}
     </tr></thead><tbody>
-      ${rows.length ? rows.map((r) => `<tr class="${cfg.open ? 'click' : ''}${s.sel.has(r.id) ? ' sel' : ''}"${cfg.open ? ` data-open="${cfg.open}:${esc(r.id)}" tabindex="0" role="link" aria-label="Open ${cfg.open} ${esc(r.id)}"` : ''}>${cfg.bulk ? `<td class="chk"><input type="checkbox" aria-label="Select" data-lv="${id}" data-lv-sel="${esc(r.id)}" ${s.sel.has(r.id) ? 'checked' : ''}></td>` : ''}${cfg.columns.map((c) => `<td class="${c.align === 'r' ? 'r' : ''}${c.wrap ? ' wrap' : ''}">${c.render(r)}</td>`).join('')}</tr>`).join('')
+      ${pageRows.length ? pageRows.map((r) => `<tr class="${cfg.open ? 'click' : ''}${s.sel.has(r.id) ? ' sel' : ''}"${cfg.open ? ` data-open="${cfg.open}:${esc(r.id)}" tabindex="0" role="link" aria-label="Open ${cfg.open} ${esc(r.id)}"` : ''}>${cfg.bulk ? `<td class="chk"><input type="checkbox" aria-label="Select" data-lv="${id}" data-lv-sel="${esc(r.id)}" ${s.sel.has(r.id) ? 'checked' : ''}></td>` : ''}${cfg.columns.map((c) => `<td class="${c.align === 'r' ? 'r' : ''}${c.wrap ? ' wrap' : ''}">${c.render(r)}</td>`).join('')}</tr>`).join('')
       : `<tr><td colspan="${cfg.columns.length + (cfg.bulk ? 1 : 0)}" class="empty"><strong>${esc(cfg.emptyTitle || 'Nothing here')}</strong>${esc(cfg.emptyText || 'Try another tab or clear the search.')}</td></tr>`}
     </tbody></table></div>
-    <div class="tfoot"><span>Showing ${nf.format(rows.length)} ${rows.length === 1 ? (cfg.noun || 'row') : (cfg.noun ? `${cfg.noun}s` : 'rows')}</span>${cfg.foot || ''}</div></section>`;
+    <div class="tfoot"><span>${pageSize > 0 && totalRows > 0
+      ? `Showing ${nf.format(pageStart + 1)}–${nf.format(pageStart + pageRows.length)} of ${nf.format(totalRows)} ${totalRows === 1 ? (cfg.noun || 'row') : (cfg.noun ? `${cfg.noun}s` : 'rows')}`
+      : `Showing ${nf.format(totalRows)} ${totalRows === 1 ? (cfg.noun || 'row') : (cfg.noun ? `${cfg.noun}s` : 'rows')}`}</span>${pageSize > 0 && pageCount > 1 ? pageNav(id, s.page, pageCount) : ''}${cfg.foot || ''}</div></section>`;
+}
+
+// Compact pager rendered in the listView footer. Keyed by `data-lv-page`
+// so App.jsx's click delegation can read the target page index.
+function pageNav(id, page, pageCount) {
+  const btn = (n, label, disabled, extra = '') => `<button type="button" class="btn btn-sec btn-sm" data-lv="${id}" data-lv-page="${n}" ${disabled ? 'disabled aria-disabled="true"' : ''} ${extra}>${label}</button>`;
+  return `<span class="pager" style="display:inline-flex;gap:6px;align-items:center;margin-left:auto">
+    ${btn(page - 1, 'Prev', page === 0)}
+    <span class="sub" style="padding:0 6px">Page ${nf.format(page + 1)} of ${nf.format(pageCount)}</span>
+    ${btn(page + 1, 'Next', page >= pageCount - 1)}
+  </span>`;
 }
 export const lvSelected = (id) => [...(LV[id]?.sel || [])];

@@ -1361,7 +1361,12 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
 
     packSlip: (el) => {
       const o = ORD[el.dataset.id]; if (!o) return;
-      openDoc(`Packing slip ${o.id}`, docPackSlip(o));
+      try {
+        openDoc(`Packing slip ${o.id}`, docPackSlip(o));
+      } catch (e) {
+        toast(`Could not open packing slip: ${e.message}`);
+        console.error('[packSlip]', e);
+      }
     },
   };
 }

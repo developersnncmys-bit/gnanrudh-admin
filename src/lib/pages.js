@@ -710,7 +710,7 @@ BC_VIEW.labels = () => {
 };
 
 BC_VIEW.pieces = () => listView('pieces', {
-  rows: pieces, noun: 'piece', placeholder: 'Piece code, product or order', minWidth: 1100, open: 'piece',
+  rows: pieces, noun: 'piece', placeholder: 'Piece code, product or order', minWidth: 1100, open: 'piece', pageSize: 15,
   text: (u) => `${u.code || u.id} ${PROD[u.pid]?.name || ''} ${u.oid || ''}`,
   tabs: ['In stock', 'Reserved', 'Packed', 'Shipped', 'Returned', 'Written off'].map((s) => ({
     id: s, label: s === 'Shipped' ? 'Sold and shipped' : s, filter: (u) => u.status === s, hot: s === 'Returned',
@@ -890,7 +890,7 @@ PAGES.packing = () => {
           <div class="panel-body"><ul class="list pack-list">${o.items.map((it, i) => {
             const p = PROD[it.pid]; const v = variantOf(it); const got = pack.got[i];
             return `<li><span class="pack-state ${got ? 'done' : 'todo'}" aria-hidden="true">${got ? '✓' : i + 1}</span>${swv(v, p, '')}
-              <span class="grow"><b>${esc(p.name)}</b><span class="sub">${esc(v.colour)}${v.size ? `, size ${v.size}` : ''}. ${got ? `Scanned ${esc(got)}` : it.piece ? `Reserved piece ${esc(it.piece)}, or any piece of this colour in stock` : it.short ? '<span class="t-bad">No piece in stock</span>' : 'Any piece of this colour'}</span>
+              <span class="grow"><b>${esc(p?.name || 'Product removed')}</b><span class="sub">${esc(v?.colour || 'variant removed')}${v?.size ? `, size ${v.size}` : ''}. ${got ? `Scanned ${esc(got)}` : it.piece ? `Reserved piece ${esc(it.piece)}, or any piece of this colour in stock` : it.short ? '<span class="t-bad">No piece in stock</span>' : 'Any piece of this colour'}</span>
               ${it.stitch ? `<label class="small" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" data-act="packTick" data-i="${i}" ${pack.ticks[i] ? 'checked' : ''}> Stitched blouse for ${esc(it.stitch.profile)} is in the box</label>` : ''}</span>
               ${got ? pill('Packed', 'info') : pill('To scan', 'neutral')}</li>`;
           }).join('')}</ul></div>

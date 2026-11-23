@@ -168,8 +168,9 @@ function App() {
       if (lvEl && !lvEl.matches('input[data-lv-q], select')) {
         const id = lvEl.dataset.lv; const s = LV[id];
         if (!s) return;
-        if (lvEl.dataset.lvTab) { s.tab = lvEl.dataset.lvTab; s.sel.clear(); return renderPage(); }
-        if (lvEl.dataset.lvSort) { const k = lvEl.dataset.lvSort; s.sort = s.sort?.key !== k ? { key: k, dir: 'asc' } : s.sort.dir === 'asc' ? { key: k, dir: 'desc' } : null; return renderPage(); }
+        if (lvEl.dataset.lvTab) { s.tab = lvEl.dataset.lvTab; s.sel.clear(); s.page = 0; return renderPage(); }
+        if (lvEl.dataset.lvSort) { const k = lvEl.dataset.lvSort; s.sort = s.sort?.key !== k ? { key: k, dir: 'asc' } : s.sort.dir === 'asc' ? { key: k, dir: 'desc' } : null; s.page = 0; return renderPage(); }
+        if (lvEl.dataset.lvPage) { const p = Number(lvEl.dataset.lvPage); if (Number.isFinite(p) && p >= 0) { s.page = p; } return renderPage(); }
         if (lvEl.hasAttribute('data-lv-clear')) { s.sel.clear(); return renderPage(); }
       }
       const act = e.target.closest('[data-act]');
@@ -225,7 +226,7 @@ function App() {
     const onChange = (e) => {
       const el = e.target;
       const A = actionsRef.current;
-      if (el.dataset.lvF) { LV[el.dataset.lv].f[el.dataset.lvF] = el.value; return renderPage(); }
+      if (el.dataset.lvF) { LV[el.dataset.lv].f[el.dataset.lvF] = el.value; LV[el.dataset.lv].page = 0; return renderPage(); }
       if (el.dataset.lvSel) { const s = LV[el.dataset.lv].sel; el.checked ? s.add(el.dataset.lvSel) : s.delete(el.dataset.lvSel); return renderPage(); }
       if (el.hasAttribute('data-lv-all')) { const id = el.dataset.lv; const rows = [...document.querySelectorAll(`[data-lv="${id}"][data-lv-sel]`)].map((x) => x.dataset.lvSel); rows.forEach((r) => (el.checked ? LV[id].sel.add(r) : LV[id].sel.delete(r))); return renderPage(); }
       if (CHECK_ACTS.includes(el.dataset.act) && A) A[el.dataset.act](el);
@@ -432,6 +433,7 @@ function App() {
     const onSearch = debounce((el) => {
       const id = el.dataset.lv; if (!LV[id]) return;
       LV[id].q = el.value;
+      LV[id].page = 0;
       const pos = el.selectionStart;
       renderPage();
       setTimeout(() => {
