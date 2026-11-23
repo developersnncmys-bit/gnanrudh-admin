@@ -371,7 +371,7 @@ export function productDrawer(id) {
   const p = draftP; const c = CAT[p.cat] || categories[0];
   const opt = (arr, v) => arr.map((o) => `<option value="${esc(ov(o))}"${String(ov(o)) === String(v) ? ' selected' : ''}>${esc(ol(o))}</option>`).join('');
   const f = (label, id_, ctl, hint = '', span = false) => `<div class="field${span ? ' span2' : ''}"><label for="${id_}">${label}</label>${ctl}${hint ? `<span class="hint">${hint}</span>` : ''}</div>`;
-  const inp = (id_, v, ph = '') => `<input class="ctl" id="${id_}" value="${esc(v ?? '')}" placeholder="${esc(ph)}">`;
+  const inp = (id_, v, ph = '', required = false) => `<input class="ctl" id="${id_}" value="${esc(v ?? '')}" placeholder="${esc(ph)}"${required ? ' required' : ''}>`;
   const sel = (id_, arr, v) => `<select class="ctl" id="${id_}">${opt(arr, v)}</select>`;
   const tiles = Array.from({ length: p.images }, (_, i) => p.imageUrls[i] ? `<div class="photo on img" style="background-image:url('${p.imageUrls[i]}')"><button type="button" class="photo-x" data-act="removeImage" data-i="${i}" aria-label="Remove image ${i + 1}">${icon('x', 12)}</button></div>` : `<div class="photo on" style="--b:${p.hex};--z:${p.zariHex}">Image ${i + 1}<button type="button" class="photo-x" data-act="removeImage" data-i="${i}" aria-label="Remove image ${i + 1}">${icon('x', 12)}</button></div>`).join('');
   // Single colour tag for the main image set — admin picks which colour
@@ -401,10 +401,10 @@ export function productDrawer(id) {
           <input type="file" id="pf-video" accept="video/*" hidden>
         </div></div>
       <div class="d-sec"><h3>Basics</h3><div class="form-grid">
-        ${f('Name', 'pf-name', inp('pf-name', p.name, 'Colour, weave and the defining motif'), '', true)}
+        ${f('Name', 'pf-name', inp('pf-name', p.name, 'Colour, weave and the defining motif', true), '', true)}
         ${f('Category', 'pf-cat', sel('pf-cat', categories.map((x) => [x.id, x.name]), p.cat), 'Category is also the weave — product.weave is saved as the category name.')}
         ${f('Status', 'pf-status', sel('pf-status', [['Active', 'Live'], 'Draft', 'Hidden'], p.status))}
-        ${f('Price, ₹, incl. GST', 'pf-price', inp('pf-price', p.price))}${f('Compare-at price, ₹', 'pf-compare', inp('pf-compare', p.compareAt || '', 'Optional'))}
+        ${f('Price, ₹, incl. GST', 'pf-price', inp('pf-price', p.price, '', true))}${f('Compare-at price, ₹', 'pf-compare', inp('pf-compare', p.compareAt || '', 'Optional'))}
         ${(() => {
           // CAT-04: at least one occasion must be picked. Multi-select checkbox group.
           // Top-level occasions are rendered as cards with their sub-categories
@@ -576,7 +576,14 @@ export function productDrawer(id) {
           : p.cat === 'acc' ? '7117 (imitation jewellery)'
           : null;
         const hsnHint = sug ? `Suggested: ${sug}` : 'Enter the 4- or 8-digit HSN.';
-        return `<div class="d-sec"><h3>GST</h3><div class="form-grid">${f('HSN code', 'pf-hsn', inp('pf-hsn', p.hsn), hsnHint)}${f('GST rate, %', 'pf-gst', inp('pf-gst', p.gst), hint)}</div></div>`;
+        // HSN + GST rate are both numeric. Overriding the generic `inp()`
+        // with explicit inputs that: (a) hint a numeric keyboard on mobile
+        // via inputmode, and (b) strip any non-digit the user types or
+        // pastes via a live oninput handler. GST allows a single decimal
+        // point (some HSN classes are 2.5% / 7.5% etc.); HSN is digits only.
+        const hsnInput = `<input class="ctl" id="pf-hsn" value="${esc(p.hsn ?? '')}" inputmode="numeric" maxlength="8" placeholder="e.g. 5007" oninput="this.value=this.value.replace(/\\D/g,'')">`;
+        const gstInput = `<input class="ctl" id="pf-gst" value="${esc(p.gst ?? '')}" inputmode="decimal" placeholder="e.g. 5" oninput="this.value=this.value.replace(/[^\\d.]/g,'').replace(/(\\..*?)\\./g,'$1')">`;
+        return `<div class="d-sec"><h3>GST</h3><div class="form-grid">${f('HSN code', 'pf-hsn', hsnInput, hsnHint)}${f('GST rate, %', 'pf-gst', gstInput, hint)}</div></div>`;
       })()}
       <p class="note n-bad" id="pf-error" role="alert" hidden></p>
     </div>
@@ -590,8 +597,10 @@ export function categoryDrawer(id) {
   // Local draft for image URL so saveCategory can read it back (new categories have no CAT[id] yet).
   categoryDrawer.image = c.image || '';
   openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">${esc(c.name || 'New category')}</h2><p class="small muted" style="margin:4px 0 0">${id === 'new' ? 'Inherits the standard filters and product template' : `${products.filter((p) => p.cat === c.id).length} products`}</p></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
-    <div class="d-body"><div class="form-grid">
-      <div class="field span2"><label for="cat-name">Name</label><input class="ctl" id="cat-name" value="${esc(c.name)}" placeholder="For example: Kidswear"></div>
+    <div class="d-body">
+      <p class="note n-bad" id="cat-error" role="alert" hidden style="margin:0 0 14px"></p>
+      <div class="form-grid">
+      <div class="field span2"><label for="cat-name">Name</label><input class="ctl" id="cat-name" value="${esc(c.name)}" placeholder="For example: Kidswear" required></div>
       <div class="field span2"><label>Category image</label>
         <div class="cat-img-row">
           <div class="cat-img-preview" id="cat-img-preview">${c.image ? `<img src="${esc(c.image)}" alt="">` : `<span class="muted small">No image yet</span>`}</div>
@@ -607,7 +616,7 @@ export function categoryDrawer(id) {
       <div class="field span2"><label for="cat-weaves">Weaves and types</label><input class="ctl" id="cat-weaves" value="${esc(c.weaves.join(', '))}" placeholder="Comma separated"><span class="hint">These become the weave filter on the category page</span></div>
       <div class="field"><label for="cat-weight">Default shipping weight, grams</label><input class="ctl" id="cat-weight" value="${c.weight}" inputmode="numeric"></div>
       <div class="field"><label for="cat-saree">Product template</label><select class="ctl" id="cat-saree"><option value="no"${c.saree ? '' : ' selected'}>Standard</option><option value="yes"${c.saree ? ' selected' : ''}>Saree, with weave and zari panel</option></select></div>
-    </div><p class="note n-bad" id="cat-error" role="alert" hidden style="margin-top:14px"></p></div>
+    </div></div>
     <div class="d-foot"><button type="button" class="btn btn-pri" data-act="saveCategory" data-id="${c.id}">Save category</button></div>`);
 }
 categoryDrawer.image = '';
@@ -646,7 +655,7 @@ export function articleDrawer(id) {
   const j = journal.find((x) => x.id === id) || { id: 'new', title: '', type: 'Weave guide', status: 'Draft', slug: '', seoTitle: '', seoDesc: '', body: '', cover: '', date: iso(addDays(TODAY, 7)) };
   openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">${esc(j.title || 'New article')}</h2><div style="margin-top:6px">${pill(j.status, j.status === 'Published' ? 'ok' : j.status === 'Scheduled' ? 'info' : 'warn', true)}</div></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
     <div class="d-body"><div class="form-grid">
-      <div class="field span2"><label for="aj-title">Title</label><input class="ctl" id="aj-title" value="${esc(j.title)}"></div>
+      <div class="field span2"><label for="aj-title">Title</label><input class="ctl" id="aj-title" value="${esc(j.title)}" required></div>
       <div class="field"><label for="aj-type">Type</label><select class="ctl" id="aj-type">${['Draping guide', 'Weave guide', 'Zari care', 'Lookbook'].map((t) => `<option${t === j.type ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="field"><span class="lbl">Cover image</span><span style="display:flex;gap:10px;align-items:center">${j.cover ? `<img src="${j.cover}" alt="" style="width:64px;height:40px;object-fit:cover;border-radius:4px">` : ''}<label class="btn btn-sec btn-sm" for="aj-cover">${j.cover ? 'Replace' : 'Upload'}</label><input type="file" id="aj-cover" accept="image/*" hidden data-article="${j.id}"></span></div>
       <div class="field span2"><label for="aj-body">Article</label><textarea class="ctl" id="aj-body" style="min-height:220px" placeholder="Write the article.">${esc(j.body || '')}</textarea></div>

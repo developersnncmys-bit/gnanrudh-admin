@@ -9,7 +9,7 @@ import {
 import { buildActions, openPalette, renderPalette, choosePalette, CHECK_ACTS, toast, ask, handleScan } from './lib/actions.js';
 import { installGlobalScanner } from './lib/scanner.js';
 import { LV } from './lib/renderers.js';
-import { debounce, esc, iso, TODAY } from './lib/utils.js';
+import { debounce, esc, iso, TODAY, validateRequiredIn } from './lib/utils.js';
 import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS, bootstrap } from './lib/data.js';
 import { api, auth, onAuthExpired } from './lib/api.js';
 import LoginPage from './components/LoginPage.jsx';
@@ -149,6 +149,18 @@ function App() {
       const A = actionsRef.current;
       if (act && A && A[act.dataset.act] && !(act.tagName === 'INPUT' && act.type === 'checkbox' && CHECK_ACTS.includes(act.dataset.act))) {
         if (act.tagName === 'A') e.preventDefault();
+        // Global required-field guard. Any save/publish action that lives
+        // inside an open drawer must first satisfy every [required] input
+        // in that drawer's body. The helper flags empties with
+        // aria-invalid + pops the native tooltip on the first one.
+        if (/^(save|publish)/.test(act.dataset.act)) {
+          const drawerBody = act.closest('#drawer')?.querySelector('.d-body')
+            || document.getElementById('drawer')?.querySelector('.d-body');
+          if (drawerBody && !validateRequiredIn(drawerBody)) {
+            e.preventDefault();
+            return;
+          }
+        }
         return A[act.dataset.act](act, e);
       }
       const open = e.target.closest('[data-open]');
@@ -404,6 +416,12 @@ function App() {
       if (e.target.hasAttribute('data-lv-q')) onSearch(e.target);
       if (e.target.id === 'aj-seot') document.getElementById('aj-seot-n').textContent = `${e.target.value.length} of about 60 characters`;
       if (e.target.id === 'aj-seod') document.getElementById('aj-seod-n').textContent = `${e.target.value.length} of about 155 characters`;
+      // Clear the red required-field marker as soon as the user types a
+      // non-empty value. Keeps the inline validation from lingering once
+      // the user has started fixing the form.
+      if (e.target.getAttribute('aria-invalid') === 'true' && String(e.target.value || '').trim()) {
+        e.target.removeAttribute('aria-invalid');
+      }
     };
     document.addEventListener('input', onInput);
     return () => document.removeEventListener('input', onInput);

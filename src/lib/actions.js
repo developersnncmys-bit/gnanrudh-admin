@@ -155,7 +155,17 @@ function saveProduct(publish, rerender) {
     : publish && !p.images ? 'Add at least one image before publishing.'
     : publish && (!p.hsn || p.gst === '') ? 'Enter the HSN code and GST rate before publishing, so invoices are correct.'
     : null;
-  if (err) { const e = document.getElementById('pf-error'); e.textContent = err; e.hidden = false; e.scrollIntoView({ block: 'nearest' }); return; }
+  if (err) {
+    // Surface the validation message both inline AND as a top-right toast.
+    // The inline note at the bottom of the drawer body sits far below the
+    // Save button, so an admin scrolled near the top of a long product
+    // drawer wouldn't notice it scroll into view. The toast makes it
+    // unmistakable that the save was rejected and why.
+    const e = document.getElementById('pf-error');
+    if (e) { e.textContent = err; e.hidden = false; e.scrollIntoView({ block: 'nearest' }); }
+    toast(err);
+    return;
+  }
   // CAT-01/02/07: soft hygiene warnings — surface via toast so staff can ignore if
   // intentional, but the first mistake is visible without a round-trip.
   const warns = [];
@@ -482,6 +492,7 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       }
     },
     newProduct: () => productDrawer('new'),
+    editProduct: (el) => productDrawer(el.dataset.id),
     saveProduct: () => saveProduct(false, rerender),
     publishProduct: () => saveProduct(true, rerender),
     discardProduct: async () => {

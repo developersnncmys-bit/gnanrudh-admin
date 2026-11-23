@@ -68,8 +68,39 @@ export const ICONS = {
   insights: '<path d="M3 3v18h18"/><path d="m7 14 3-3 3 2 5-6"/><circle cx="18" cy="7" r="1.5"/>',
   barcode: '<path d="M3 5v14M6 5v14M10 5v14M13 5v14M17 5v14M21 5v14"/>',
   pack: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  trash: '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
 };
 export const icon = (n, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
+
+// Walks every `[required]` input / select / textarea in `scope`, flags empty
+// ones with `aria-invalid="true"` (picked up by the red-border rule in
+// styles.css at `.ctl[aria-invalid="true"]`), focuses the first offender,
+// and triggers the browser's native "Please fill out this field" tooltip
+// on it. Returns true when every required field has a value — callers
+// should bail out of save when it returns false.
+export function validateRequiredIn(scope) {
+  if (!scope) return true;
+  const fields = scope.querySelectorAll('input[required], select[required], textarea[required]');
+  let firstEmpty = null;
+  for (const el of fields) {
+    const empty = !String(el.value || '').trim();
+    if (empty) {
+      el.setAttribute('aria-invalid', 'true');
+      firstEmpty = firstEmpty || el;
+    } else {
+      el.removeAttribute('aria-invalid');
+    }
+  }
+  if (firstEmpty) {
+    try { firstEmpty.focus({ preventScroll: false }); } catch { firstEmpty.focus(); }
+    // reportValidity() pops the native tooltip right next to the field,
+    // which is exactly the per-field hint the admin asked for.
+    if (typeof firstEmpty.reportValidity === 'function') firstEmpty.reportValidity();
+    return false;
+  }
+  return true;
+}
 
 /* ---------- Code 128 (character set B) ---------- */
 // Widths of bar/space/bar/space/bar/space per symbol; last is the stop pattern.

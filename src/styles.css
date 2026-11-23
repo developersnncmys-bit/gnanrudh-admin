@@ -312,8 +312,9 @@ dialog::backdrop { background: rgba(28, 26, 32, .42); }
 .color-pick input[type="color"] { width: 72px; height: 44px; padding: 2px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); cursor: pointer; }
 .color-pick input[type="color"]:focus-visible { outline: none; box-shadow: var(--ring); }
 .color-hex { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: var(--fs-md); color: var(--ink-2); letter-spacing: 0.5px; }
-.toasts { position: fixed; left: 50%; bottom: 24px; z-index: 70; display: flex; flex-direction: column; gap: 8px; transform: translateX(-50%); }
-.toast { padding: 10px 14px; border-radius: var(--r-md); background: #241e27; color: #fff; font-size: var(--fs-md); box-shadow: var(--pop); }
+.toasts { position: fixed; top: 24px; right: 24px; z-index: 70; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; max-width: calc(100vw - 48px); }
+.toast { pointer-events: auto; padding: 10px 14px; border-radius: var(--r-md); background: #241e27; color: #fff; font-size: var(--fs-md); box-shadow: var(--pop); max-width: 360px; animation: toast-slide-in 220ms cubic-bezier(.16,1,.3,1); }
+@keyframes toast-slide-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
 
 @media (max-width: 1200px) {
   .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -713,11 +714,16 @@ table.heat { width: 100%; min-width: 640px; border-collapse: separate; border-sp
 .occ-subs-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .occ-subs-label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--zari); }
 .occ-subs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
-.occ-sub { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); transition: border-color 120ms, box-shadow 120ms; }
+/* Two-column grid so the tile sits on the left and the title/meta/actions
+   stack cleanly on the right. The actions row is pinned below the meta
+   instead of racing it for horizontal space — fixes the overlap when the
+   card is narrow (3-per-row in the sub-grid). */
+.occ-sub { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "tile main" "tile actions"; row-gap: 6px; column-gap: 12px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); transition: border-color 120ms, box-shadow 120ms; }
 .occ-sub:hover { border-color: var(--line-2); box-shadow: 0 1px 2px rgba(28,26,32,0.05); }
-.occ-sub-main { min-width: 0; flex: 1; }
+.occ-sub > .occ-tile-wrap { grid-area: tile; align-self: center; }
+.occ-sub-main { grid-area: main; min-width: 0; align-self: end; }
 .occ-sub-title { font-weight: 600; font-size: var(--fs-md); color: var(--ink); line-height: 1.2; }
 .occ-sub-meta { margin-top: 3px; font-size: var(--fs-xs); color: var(--ink-3); }
 .occ-sub-meta b { color: var(--pri); font-weight: 600; }
-.occ-sub-actions { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-left: auto; }
+.occ-sub-actions { grid-area: actions; display: flex; gap: 4px; flex-wrap: wrap; align-items: center; align-self: start; }
 .occ-sub-actions .btn-sm { height: 26px; padding: 0 8px; font-size: 11px; }

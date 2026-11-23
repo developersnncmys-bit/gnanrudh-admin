@@ -78,16 +78,68 @@ const patch = (path, body) => request(path, { method: 'PATCH', body });
 const put = (path, body) => request(path, { method: 'PUT', body });
 const del = (path) => request(path, { method: 'DELETE' });
 
+// Media size caps. Images get a tight 10 MB cap (anything larger is a
+// badly-exported photo — no visual benefit on a web card) and videos get
+// 50 MB because drape clips are ~10-30 MB in mp4 at 720p. Backend multer
+// limit is set higher (see routes/uploads.js) so a user who manages to
+// bypass the client check still gets rejected server-side with a 413.
+// Per-file check runs BEFORE FormData assembly so a 300 MB mistake fails
+// in milliseconds rather than after a slow upload.
+export const UPLOAD_LIMITS = {
+  image: 10 * 1024 * 1024,  // 10 MB
+  video: 50 * 1024 * 1024,  // 50 MB
+  other: 10 * 1024 * 1024,  // CSVs / pincode lists / anything else
+};
+
+function formatMB(bytes) {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function kindOf(file) {
+  const mt = String(file.type || '');
+  if (mt.startsWith('image/')) return 'image';
+  if (mt.startsWith('video/')) return 'video';
+  return 'other';
+}
+
+export function checkUploadSizes(files) {
+  const bad = [];
+  for (const f of files) {
+    const kind = kindOf(f);
+    const limit = UPLOAD_LIMITS[kind];
+    if (f.size > limit) {
+      bad.push({ name: f.name, size: f.size, kind, limit });
+    }
+  }
+  if (!bad.length) return null;
+  const first = bad[0];
+  return bad.length === 1
+    ? `${first.name} is ${formatMB(first.size)} — ${first.kind}s must be under ${formatMB(first.limit)}.`
+    : `${bad.length} files are over the limit (${first.kind}s: ${formatMB(first.limit)}, videos: ${formatMB(UPLOAD_LIMITS.video)}). First: ${first.name} at ${formatMB(first.size)}.`;
+}
+
 async function uploadFiles(files) {
+  const list = [...files];
+  const err = checkUploadSizes(list);
+  if (err) throw new Error(err);
   const fd = new FormData();
-  [...files].forEach((f) => fd.append('files', f));
+  list.forEach((f) => fd.append('files', f));
   const res = await fetch(`${BASE}/uploads`, { method: 'POST', body: fd, headers: authHeader() });
   if (res.status === 401) { auth.clear(); notifyExpired(); throw new Error('Session expired.'); }
+  // Backend's multer rejects over-limit uploads with 413 (or 500 with
+  // `LIMIT_FILE_SIZE` in the body from multer's MulterError). Surface a
+  // readable message so the toast tells the admin what to do.
+  if (res.status === 413) {
+    throw new Error(`Upload too large. Images must be under ${formatMB(UPLOAD_LIMITS.image)}, videos under ${formatMB(UPLOAD_LIMITS.video)}.`);
+  }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try {
       const j = await res.json();
       if (j.error) msg = j.error;
+      if (/LIMIT_FILE_SIZE/i.test(JSON.stringify(j))) {
+        msg = `Upload too large. Images must be under ${formatMB(UPLOAD_LIMITS.image)}, videos under ${formatMB(UPLOAD_LIMITS.video)}.`;
+      }
       // Routes like /orders/:id/invoice return an `issues` array listing every
       // Settings field that failed `settingsReady`. Surface them so the toast is actionable.
       if (Array.isArray(j.issues) && j.issues.length) msg += ` — ${j.issues.join('; ')}`;

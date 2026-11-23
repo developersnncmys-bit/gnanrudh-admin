@@ -155,7 +155,7 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
   ${listView('products', {
     rows: products, noun: 'product', placeholder: 'Name, weave or SKU', minWidth: 1180, open: 'product',
     text: (p) => `${p.name} ${p.weave} ${p.variants.map((v) => `${v.sku} ${v.colour}`).join(' ')}`,
-    tabs: [{ id: 'all', label: 'All', filter: null }, ...categories.map((c) => ({ id: c.id, label: c.name, filter: (p) => p.cat === c.id })), { id: 'draft', label: 'Drafts', filter: (p) => p.status === 'Draft' }, { id: 'oos', label: 'Colour out of stock', filter: (p) => p.variants.some((v) => v.stock === 0), hot: true }, { id: 'soldout', label: 'Sold out', filter: (p) => p.status === 'Active' && stockOf(p) === 0, hot: true, note: 'CAT-06: these are live on the store but have zero stock across every colour. The storefront shows them as sold out automatically.' }],
+    tabs: [{ id: 'all', label: 'All', filter: null }, ...categories.map((c) => ({ id: c.id, label: c.name, filter: (p) => p.cat === c.id })), { id: 'draft', label: 'Drafts', filter: (p) => p.status === 'Draft' }, { id: 'oos', label: 'Colour out of stock', filter: (p) => p.variants.some((v) => piecesOf(v.id, 'In stock').length === 0), hot: true }, { id: 'soldout', label: 'Sold out', filter: (p) => p.status === 'Active' && stockOf(p) === 0, hot: true, note: 'CAT-06: these are live on the store but have zero stock across every colour. The storefront shows them as sold out automatically.' }],
     filters: [
       { id: 'zari', label: 'Any zari', options: ['Pure zari', 'Tested zari', 'No zari'], test: (p, v) => p.zari === v },
       { id: 'occ', label: 'All occasions', options: OCCASIONS, test: (p, v) => p.occasion === v },
@@ -187,10 +187,14 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
         if (p.status === 'Active' && stockOf(p) === 0) return pill('Sold out', 'bad', true);
         return pill(p.status === 'Active' ? 'Live' : p.status, p.status === 'Active' ? 'ok' : p.status === 'Draft' ? 'warn' : 'neutral', true);
       } },
-      // Row-level delete. Confirmation is handled by the action in actions.js.
-      // The global click handler short-circuits on [data-act] elements before
-      // trying to open the row, so clicking Delete won't also open the drawer.
-      { key: 'act', label: '', align: 'r', render: (p) => `<button type="button" class="btn btn-ghost btn-sm" data-act="deleteProduct" data-id="${esc(p.id)}">Delete</button>` },
+      // Row-level actions. Confirmation on delete is handled by the action
+      // in actions.js. The global click handler short-circuits on [data-act]
+      // elements before trying to open the row, so clicking Edit/Delete
+      // doesn't also trigger the row's open behaviour.
+      { key: 'act', label: '', align: 'r', render: (p) => `<span style="display:inline-flex;gap:4px;justify-content:flex-end">
+        <button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="editProduct" data-id="${esc(p.id)}" title="Edit" aria-label="Edit ${esc(p.name)}">${icon('edit', 14)}</button>
+        <button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="deleteProduct" data-id="${esc(p.id)}" title="Delete" aria-label="Delete ${esc(p.name)}">${icon('trash', 14)}</button>
+      </span>` },
     ],
   })}`;
 
@@ -368,7 +372,6 @@ PAGES.occasions = () => {
       </div>
       <div class="occ-sub-actions">
         <button type="button" class="btn btn-ghost btn-sm" data-act="renameOccasion" data-id="${esc(o.name)}">Rename</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="moveOccasion" data-id="${esc(o.name)}">Move…</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="deleteOccasion" data-id="${esc(o.name)}">Delete</button>
       </div>
     </div>`;
