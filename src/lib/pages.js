@@ -41,7 +41,17 @@ PAGES.dashboard = () => {
   // Phase 4: chart window follows the selected dashRange toggle (Today / 7 / 30 days).
   const chartSpan = Math.max(dashRange, 7); // Today alone would be one point; show a week minimum.
   const days = Array.from({ length: chartSpan }, (_, i) => addDays(TODAY, i - (chartSpan - 1)));
-  const byCat = (ids) => days.map((d) => orders.filter((o) => paid(o) && daysFrom(o.placed) === daysFrom(d)).flatMap((o) => o.items).filter((it) => PROD[it.pid] && ids.includes(PROD[it.pid].cat)).reduce((a, it) => a + it.price, 0));
+  // Daily paid totals across ALL categories. The old implementation split
+  // by seed category ids ('silk', 'cotton', 'designer', 'lehenga', 'acc')
+  // which no longer exist in Mongo — admins now create their own
+  // categories with generated ids — so both series collapsed to zero and
+  // the chart rendered empty even when payments had come in. This single
+  // honest series tracks "Payments received per day" instead.
+  const paidPerDay = days.map((d) =>
+    orders
+      .filter((o) => paid(o) && daysFrom(o.placed) === daysFrom(d))
+      .reduce((a, o) => a + (o.total || 0), 0),
+  );
   const items = [
     [q.ndr, 'Failed deliveries to act on', 'Shiprocket raised an NDR. Reattempt, update the address or return to origin.', '/orders', 'bad'],
     [q.pending, 'Payments pending in Razorpay', 'Usually a UPI payment not yet confirmed. The order is pushed to Shiprocket once it clears.', '/orders', 'warn'],
@@ -71,8 +81,8 @@ PAGES.dashboard = () => {
         <section class="panel"><div class="panel-head"><h2 class="h2">Sales by category, 30 days</h2></div><div class="panel-body">${hbars(categories.map((c) => ({ label: c.name, value: orders.filter((o) => paid(o) && inDays(o, 0, 30)).flatMap((o) => o.items).filter((it) => PROD[it.pid].cat === c.id).reduce((a, it) => a + it.price, 0) })).sort((a, b) => b.value - a.value), { fmt: inrS })}</div></section>
       </div>
     </div>
-    <section class="panel" style="margin-top:16px"><div class="panel-head"><div><h2 class="h2">Payments received, last ${chartSpan} days</h2><p>Stacked by category group. Hover a day for the split.</p></div><div class="legend"><span><i style="background:#05380d"></i>Silk</span><span><i style="background:#E0AE6D"></i>Cotton, designer and ethnic sets</span></div></div>
-      <div class="panel-body">${areaChart([byCat(['silk']), byCat(['cotton', 'designer', 'lehenga', 'acc'])], days.map((d) => dmF.format(d)), { names: ['Silk', 'Cotton, designer, ethnic'] })}</div></section>
+    <section class="panel" style="margin-top:16px"><div class="panel-head"><div><h2 class="h2">Payments received, last ${chartSpan} days</h2><p>Hover a day to see the amount received.</p></div><div class="legend"><span><i style="background:#05380d"></i>Payments received</span></div></div>
+      <div class="panel-body">${areaChart([paidPerDay], days.map((d) => dmF.format(d)), { names: ['Payments received'] })}</div></section>
     <section class="panel" style="margin-top:16px"><div class="panel-head"><h2 class="h2">Latest orders</h2><a class="link" href="/orders">All orders</a></div>
       <div class="scroll" style="margin-top:12px"><table class="t" style="min-width:820px"><thead><tr><th><span>Order</span></th><th><span>Customer</span></th><th><span>Product</span></th><th><span>Payment</span></th><th class="r"><span>Total</span></th><th><span>Status</span></th></tr></thead><tbody>
       ${orders.slice(0, 6).map((o) => `<tr class="click" data-open="order:${o.id}"><td><b>${o.id}</b><span class="sub">${esc(dtF.format(new Date(o.placed)))}</span></td><td>${esc(CUST[o.cid].name)}<span class="sub">${esc(CUST[o.cid].city)}</span></td><td>${prodCell(PROD[o.items[0].pid], o.items.length > 1 ? `, and ${o.items.length - 1} more` : '')}</td><td>${pill(o.payment.status, PAY_TONE[o.payment.status])}<span class="sub">${esc(o.payment.method)}</span></td><td class="r strong">${inr(o.total)}</td><td>${pill(o.status, ORDER_TONE[o.status], true)}</td></tr>`).join('')}
@@ -82,9 +92,20 @@ PAGES.dashboard = () => {
 /* =============== ORDERS =============== */
 PAGES.orders = () => `<div class="page-head"><div><h1 class="h1">Orders</h1><p class="lede">Paid orders are pushed to Shiprocket automatically and a label is generated.</p></div>
     <div style="display:flex;gap:8px"><button type="button" class="btn btn-sec" data-act="exportExcel" data-what="orders">${icon('dl')}Export CSV</button><button type="button" class="btn btn-pri" data-act="newOrder">${icon('plus')}New order</button></div></div>
-  ${listView('orders', {
+  ${(() => {
+    // Storefront orders carry a cid for a customer the admin's local
+    // `customers` cache may not have seen yet (newly signed-up shopper,
+    // bootstrap ran before the signup). Reading `.name` on undefined
+    // threw — and because that fires inside every row's render, the
+    // whole Orders list silently failed to paint, which is why
+    // storefront orders looked missing. Same story for `PROD[pid]` when
+    // the product was deleted. Every lookup below is now null-safe and
+    // falls back to a readable placeholder.
+    const cust = (cid) => CUST[cid] || { name: 'Guest', city: '—' };
+    const prod = (pid) => PROD[pid] || null;
+    return listView('orders', {
     rows: orders, noun: 'order', placeholder: 'Order number, customer, city, AWB or payment ID', minWidth: 1180, open: 'order',
-    text: (o) => `${o.id} ${CUST[o.cid].name} ${CUST[o.cid].city} ${o.ship.awb || ''} ${o.payment.rzp || ''}`,
+    text: (o) => `${o.id} ${cust(o.cid).name} ${cust(o.cid).city} ${o.ship?.awb || ''} ${o.payment?.rzp || ''}`,
     tabs: [
       { id: 'open', label: 'Open', filter: (o) => !['Delivered', 'Returned to origin', 'Cancelled'].includes(o.status) },
       { id: 'pending', label: 'Payment pending', filter: (o) => o.status === 'Payment pending', hot: true, note: 'Razorpay has not confirmed these payments yet. They update automatically when the webhook arrives, or you can cancel them.' },
@@ -95,21 +116,26 @@ PAGES.orders = () => `<div class="page-head"><div><h1 class="h1">Orders</h1><p c
       { id: 'all', label: 'All', filter: null },
     ],
     filters: [
-      { id: 'pay', label: 'All payments', options: ['Paid', 'Pending', 'COD pending', 'COD collected', 'Refunded'], test: (o, v) => o.payment.status === v },
-      { id: 'cat', label: 'All categories', options: categories.map((c) => [c.id, c.name]), test: (o, v) => o.items.some((it) => PROD[it.pid].cat === v) },
+      { id: 'pay', label: 'All payments', options: ['Paid', 'Pending', 'COD pending', 'COD collected', 'Refunded'], test: (o, v) => o.payment?.status === v },
+      { id: 'cat', label: 'All categories', options: categories.map((c) => [c.id, c.name]), test: (o, v) => o.items.some((it) => prod(it.pid)?.cat === v) },
     ],
     bulk: [['bulkLabels', 'Print labels'], ['bulkInvoices', 'Download tax invoices'], ['exportSelected', 'Export CSV']],
     sort: { key: 'placed', dir: 'desc' },
     columns: [
       { key: 'placed', label: 'Order', sort: true, render: (o) => `<b>${o.id}</b><span class="sub">${esc(dtF.format(new Date(o.placed)))}</span>` },
-      { key: 'cust', label: 'Customer', sort: (o) => CUST[o.cid].name, render: (o) => `${esc(CUST[o.cid].name)}<span class="sub">${esc(CUST[o.cid].city)}, ${esc(o.ship.pin)}</span>` },
-      { key: 'items', label: 'Products', render: (o) => prodCell(PROD[o.items[0].pid], o.items.length > 1 ? `, and ${o.items.length - 1} more` : '') },
-      { key: 'pay', label: 'Payment', sort: (o) => o.payment.status, render: (o) => `${pill(o.payment.status, PAY_TONE[o.payment.status])}<span class="sub">${esc(o.payment.method)}</span>` },
+      { key: 'cust', label: 'Customer', sort: (o) => cust(o.cid).name, render: (o) => `${esc(cust(o.cid).name)}<span class="sub">${esc(cust(o.cid).city || '—')}, ${esc(o.ship?.pin || '—')}</span>` },
+      { key: 'items', label: 'Products', render: (o) => {
+          const first = prod(o.items[0]?.pid);
+          const more = o.items.length > 1 ? `, and ${o.items.length - 1} more` : '';
+          return first ? prodCell(first, more) : `<span class="faint">Product removed</span>${more}`;
+        } },
+      { key: 'pay', label: 'Payment', sort: (o) => o.payment?.status, render: (o) => `${pill(o.payment?.status || '—', PAY_TONE[o.payment?.status])}<span class="sub">${esc(o.payment?.method || '—')}</span>` },
       { key: 'total', label: 'Total', sort: (o) => o.total, align: 'r', render: (o) => `<span class="strong">${inr(o.total)}</span>${o.coupon ? `<span class="sub">${esc(o.coupon)}</span>` : ''}` },
-      { key: 'ship', label: 'Shipment', render: (o) => (o.ship.awb ? `${esc(o.ship.courier)}<span class="sub">${o.ship.awb}</span>` : '<span class="faint">—</span>') },
+      { key: 'ship', label: 'Shipment', render: (o) => (o.ship?.awb ? `${esc(o.ship.courier)}<span class="sub">${o.ship.awb}</span>` : '<span class="faint">—</span>') },
       { key: 'status', label: 'Status', sort: true, render: (o) => `${pill(o.status, ORDER_TONE[o.status], true)}${o.ndr ? `<span class="sub t-bad">${esc(o.ndr)}</span>` : ''}` },
     ],
-  })}`;
+    });
+  })()}`;
 
 /* =============== RETURNS =============== */
 PAGES.returns = () => `<div class="page-head"><div><h1 class="h1">Returns</h1><p class="lede">Customers request returns from their account within ${POLICY.window} days of delivery. Approving raises a reverse pickup with Shiprocket; refunds go back through Razorpay with a GST credit note.</p></div></div>

@@ -10,7 +10,7 @@ import { buildActions, openPalette, renderPalette, choosePalette, CHECK_ACTS, to
 import { installGlobalScanner } from './lib/scanner.js';
 import { LV } from './lib/renderers.js';
 import { debounce, esc, iso, TODAY, validateRequiredIn } from './lib/utils.js';
-import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS, bootstrap } from './lib/data.js';
+import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS, bootstrap, refresh } from './lib/data.js';
 import { api, auth, onAuthExpired } from './lib/api.js';
 import LoginPage from './components/LoginPage.jsx';
 
@@ -83,6 +83,33 @@ function App() {
 
   // Any protected API call returning 401 flips us back to the login screen
   useEffect(() => onAuthExpired(() => setSignedIn(false)), []);
+
+  // Live-data refresh on route change. The admin's local pieces/orders/
+  // products arrays are populated once at bootstrap; without this, a
+  // customer order placed via the storefront doesn't update the admin's
+  // "in stock" counts or Orders list until the tab is reloaded. Refetches
+  // the slices that matter for the page the admin just opened; swallows
+  // errors silently so a flaky network doesn't disrupt navigation.
+  useEffect(() => {
+    if (bootState.status !== 'ready') return;
+    const slicesByRoute = {
+      dashboard: ['orders', 'pieces'],
+      orders: ['orders', 'pieces'],
+      products: ['products', 'pieces'],
+      inventory: ['pieces', 'movements'],
+      barcodes: ['pieces', 'movements'],
+      packing: ['orders', 'pieces'],
+      shipping: ['shipping', 'orders'],
+      returns: ['returns', 'orders'],
+      customers: ['customers', 'orders'],
+    };
+    const slices = slicesByRoute[route];
+    if (!slices) return;
+    let cancelled = false;
+    Promise.all(slices.map((s) => refresh(s).catch(() => {})))
+      .then(() => { if (!cancelled) rerender(); });
+    return () => { cancelled = true; };
+  }, [route, bootState.status, rerender]);
 
   const signOut = useCallback(async () => {
     const confirmed = await ask({
