@@ -749,7 +749,12 @@ BC_VIEW.pieces = () => listView('pieces', {
 });
 
 BC_VIEW.moves = () => listView('moves', {
-  rows: moves, noun: 'movement', placeholder: 'Piece code, product or order', minWidth: 1100,
+  // Stock movements grow unbounded over time (823 rows in this install,
+  // ~every piece has at least the "received" + a shipment move). Rendering
+  // all of them in one table blows past the viewport and slows the
+  // filter/search box; 15 per page matches the Pieces tab so the Barcodes
+  // section feels consistent.
+  rows: moves, noun: 'movement', placeholder: 'Piece code, product or order', minWidth: 1100, pageSize: 15,
   text: (m) => `${m.code} ${PROD[m.pid]?.name || ''} ${m.oid || ''} ${m.note || ''}`,
   tabs: [
     { id: 'all', label: 'All', filter: null },
