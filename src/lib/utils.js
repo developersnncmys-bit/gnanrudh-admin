@@ -85,21 +85,52 @@ export function validateRequiredIn(scope) {
   let firstEmpty = null;
   for (const el of fields) {
     const empty = !String(el.value || '').trim();
+    const label = fieldLabelFor(el);
     if (empty) {
       el.setAttribute('aria-invalid', 'true');
+      ensureErrorSlot(el).textContent = `${label} is required.`;
+      ensureErrorSlot(el).hidden = false;
       firstEmpty = firstEmpty || el;
     } else {
       el.removeAttribute('aria-invalid');
+      const slot = el.nextElementSibling;
+      if (slot?.classList?.contains('field-err')) { slot.textContent = ''; slot.hidden = true; }
     }
   }
   if (firstEmpty) {
     try { firstEmpty.focus({ preventScroll: false }); } catch { firstEmpty.focus(); }
-    // reportValidity() pops the native tooltip right next to the field,
-    // which is exactly the per-field hint the admin asked for.
-    if (typeof firstEmpty.reportValidity === 'function') firstEmpty.reportValidity();
     return false;
   }
   return true;
+}
+
+// Prefer the <label for="…"> text if we can find it; fall back to the input's
+// `placeholder`, then a Title-Cased version of the id. Keeps the error text
+// readable even on legacy drawers where the markup didn't wrap the input in
+// a dedicated label.
+function fieldLabelFor(el) {
+  if (!el) return 'This field';
+  if (el.id) {
+    const lbl = el.ownerDocument?.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    if (lbl && lbl.textContent) return lbl.textContent.trim().replace(/\s*\*$/, '');
+  }
+  if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+  if (el.placeholder) return el.placeholder;
+  if (el.name) return el.name;
+  return 'This field';
+}
+
+// Returns a `.field-err` element positioned immediately after `el`, creating
+// one if the drawer template didn't ship with its own. Reused across every
+// retry so the error line doesn't multiply when the user re-clicks Save.
+function ensureErrorSlot(el) {
+  const next = el.nextElementSibling;
+  if (next && next.classList && next.classList.contains('field-err')) return next;
+  const span = el.ownerDocument.createElement('span');
+  span.className = 'field-err';
+  span.hidden = true;
+  el.insertAdjacentElement('afterend', span);
+  return span;
 }
 
 /* ---------- Code 128 (character set B) ---------- */

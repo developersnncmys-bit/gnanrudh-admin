@@ -41,7 +41,11 @@ export function toast(m) {
 }
 
 /* ---------- Modal (ask) ---------- */
-export function ask({ title, text = '', ok, danger, fields = [], preview }) {
+// Optional `validate(vals, mark)` lets callers run field-specific checks
+// (regex, range, uniqueness, …) and surface them inline instead of closing
+// the dialog and toast-ing the whole form. `mark(fieldId, msg)` flags a
+// field red and shows `msg` under it; return false to keep the dialog open.
+export function ask({ title, text = '', ok, danger, fields = [], preview, validate }) {
   const dlg = document.getElementById('dlg');
   document.getElementById('dlgTitle').textContent = title;
   const t = document.getElementById('dlgText');
@@ -52,7 +56,11 @@ export function ask({ title, text = '', ok, danger, fields = [], preview }) {
     const initial = (f.value || '#1f5f7a').toLowerCase();
     return `<div class="color-pick"><input type="color" id="f-${f.id}" value="${esc(initial)}"><output class="color-hex" id="f-${f.id}-hex" for="f-${f.id}">${esc(initial.toUpperCase())}</output></div>`;
   };
-  document.getElementById('dlgFields').innerHTML = fields.map((f) => `<div class="field" style="margin-top:14px"><label for="f-${f.id}">${esc(f.label)}</label>${f.type === 'color' ? colorHtml(f) : f.type === 'select' ? `<select class="ctl" id="f-${f.id}">${f.options.map((o) => `<option value="${esc(ov(o))}">${esc(ol(o))}</option>`).join('')}</select>` : f.type === 'area' ? `<textarea class="ctl" id="f-${f.id}" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>` : f.type === 'file' ? `<input type="file" class="ctl" id="f-${f.id}" accept="${esc(f.accept || 'image/*')}">` : f.type === 'date' ? `<input type="date" class="ctl" id="f-${f.id}" value="${esc(f.value || '')}"${f.min ? ` min="${esc(f.min)}"` : ''}${f.max ? ` max="${esc(f.max)}"` : ''}>` : `<input class="ctl" id="f-${f.id}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`).join('');
+  // `<span class="field-err" id="e-${f.id}" hidden></span>` is rendered empty
+  // after every field so showError can populate it without touching the DOM
+  // structure. Sits between the control and the hint so the error reads as
+  // a correction and the hint still explains the intent.
+  document.getElementById('dlgFields').innerHTML = fields.map((f) => `<div class="field" style="margin-top:14px"><label for="f-${f.id}">${esc(f.label)}</label>${f.type === 'color' ? colorHtml(f) : f.type === 'select' ? `<select class="ctl" id="f-${f.id}">${f.options.map((o) => `<option value="${esc(ov(o))}">${esc(ol(o))}</option>`).join('')}</select>` : f.type === 'area' ? `<textarea class="ctl" id="f-${f.id}" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>` : f.type === 'file' ? `<input type="file" class="ctl" id="f-${f.id}" accept="${esc(f.accept || 'image/*')}">` : f.type === 'date' ? `<input type="date" class="ctl" id="f-${f.id}" value="${esc(f.value || '')}"${f.min ? ` min="${esc(f.min)}"` : ''}${f.max ? ` max="${esc(f.max)}"` : ''}>` : `<input class="ctl" id="f-${f.id}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`}<span class="field-err" id="e-${f.id}" hidden></span>${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`).join('');
   // File fields return the picked File object (or null) instead of their
   // `.value` string — which is a bogus `C:\fakepath\…` path in browsers.
   const vals = () => Object.fromEntries(fields.map((f) => {
@@ -60,6 +68,18 @@ export function ask({ title, text = '', ok, danger, fields = [], preview }) {
     if (f.type === 'file') return [f.id, el.files && el.files[0] ? el.files[0] : null];
     return [f.id, el.value];
   }));
+  const showError = (fieldId, msg) => {
+    const input = document.getElementById(`f-${fieldId}`);
+    const errEl = document.getElementById(`e-${fieldId}`);
+    if (input) input.setAttribute('aria-invalid', 'true');
+    if (errEl) { errEl.textContent = msg; errEl.hidden = false; }
+  };
+  const clearErrors = () => fields.forEach((f) => {
+    const input = document.getElementById(`f-${f.id}`);
+    const errEl = document.getElementById(`e-${f.id}`);
+    if (input) input.removeAttribute('aria-invalid');
+    if (errEl) { errEl.textContent = ''; errEl.hidden = true; }
+  });
   const runPreview = () => { document.getElementById('dlgPreview').innerHTML = preview ? `<div style="margin-top:14px">${preview(vals())}</div>` : ''; };
   fields.filter((f) => f.type === 'color').forEach((f) => {
     const input = document.getElementById(`f-${f.id}`);
@@ -73,14 +93,34 @@ export function ask({ title, text = '', ok, danger, fields = [], preview }) {
     const done = (v) => { cleanup(); if (dlg.open) dlg.close(); res(v); };
     const okH = () => {
       const v = vals();
+      clearErrors();
       // `required` checks differ by field type — File fields are missing when
-      // null, string fields when empty after trim.
-      const miss = fields.find((f) => {
+      // null, string fields when empty after trim. Flag every missing field
+      // (not just the first) so the admin sees the full picture.
+      const missing = fields.filter((f) => {
         if (!f.required) return false;
         const val = v[f.id];
         return f.type === 'file' ? !val : !String(val || '').trim();
       });
-      if (miss) { document.getElementById(`f-${miss.id}`).setAttribute('aria-invalid', 'true'); document.getElementById(`f-${miss.id}`).focus(); return; }
+      if (missing.length) {
+        missing.forEach((f) => showError(f.id, `${f.label} is required.`));
+        const first = document.getElementById(`f-${missing[0].id}`);
+        if (first) first.focus();
+        return;
+      }
+      // Caller-supplied validation: if the handler reports errors via
+      // `mark(fieldId, msg)` and returns false, keep the dialog open with
+      // those errors shown inline instead of resolving the promise.
+      if (typeof validate === 'function') {
+        let hadError = false;
+        const mark = (fieldId, msg) => { hadError = true; showError(fieldId, msg); };
+        const okToClose = validate(v, mark);
+        if (okToClose === false || hadError) {
+          const firstErr = fields.find((f) => document.getElementById(`e-${f.id}`)?.hidden === false);
+          if (firstErr) document.getElementById(`f-${firstErr.id}`)?.focus();
+          return;
+        }
+      }
       done(fields.length ? v : true);
     };
     const cancelH = () => done(null);
@@ -496,7 +536,51 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
         Object.assign(o, srv); o.id = srv._id || o.id;
       }), 'change payment status');
     },
-    checkPayment: (el) => { const o = ORD[el.dataset.id]; o.payment.status = 'Paid'; o.status = 'Label generated'; o.ship.courier = pick(COURIERS); o.ship.awb = `${between(10000000, 99999999)}11`; shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'Order pushed', at: new Date().toISOString(), courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' }); if (!o.invoice) o.invoice = `${SETTINGS.gst.inv}${String(bumpInv()).padStart(4, '0')}`; toast('Razorpay confirmed the payment. Pushed to Shiprocket and a label generated.'); orderDrawer(o.id); renderPage(); renderNav(); sync(api.orders.confirmPayment(o.id).then((srv) => { Object.assign(o, srv); o.id = srv._id || o.id; }), 'confirm payment'); },
+    // Really ask Razorpay what happened to this order's payment. Unlike the
+    // old optimistic flip, we only move the order to Paid if the gateway
+    // confirms a captured payment — anything else (still pending, failed,
+    // misconfig) leaves the order as it was and tells the admin why.
+    checkPayment: async (el) => {
+      const id = el.dataset.id;
+      const o = ORD[id]; if (!o) return;
+      try {
+        const res = await api.orders.razorpayCheck(id);
+        if (res.outcome === 'confirmed' || res.outcome === 'already-confirmed') {
+          if (res.order) { Object.assign(o, res.order); o.id = res.order._id || o.id; }
+          shipLog.unshift({
+            id: `SL${shipLog.length}`,
+            oid: o.id,
+            type: 'Order pushed',
+            at: new Date().toISOString(),
+            courier: o.ship?.courier,
+            awb: o.ship?.awb,
+            webhook: 'Received',
+          });
+          toast(res.outcome === 'already-confirmed'
+            ? `${o.id} was already confirmed.`
+            : 'Razorpay confirmed the payment. Pushed to Shiprocket and a label generated.');
+          orderDrawer(o.id); renderPage(); renderNav();
+          return;
+        }
+        if (res.outcome === 'pending') {
+          const n = res.razorpay?.attempts?.length || 0;
+          toast(n
+            ? `Razorpay has ${plural(n, 'attempt')} on this order but none captured yet. Leave it and try again, or cancel the order.`
+            : 'Razorpay has no payment attempts for this order yet.');
+          return;
+        }
+        if (res.outcome === 'failed') {
+          const attempt = res.razorpay?.attempts?.find((a) => a.errorDescription);
+          toast(attempt
+            ? `Razorpay reports the payment failed: ${attempt.errorDescription}`
+            : 'Razorpay reports every payment attempt failed.');
+          return;
+        }
+        toast(`Razorpay returned an unexpected outcome: ${res.outcome || 'unknown'}.`);
+      } catch (err) {
+        toast(`Could not check with Razorpay: ${err.message}`);
+      }
+    },
     // Admin-driven payment confirmation for walk-in / manual orders, or
     // when the Razorpay webhook is late. Mirrors the server's confirmPayment
     // flow so the UI paints the paid state instantly and we reconcile with
@@ -1166,7 +1250,41 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     replyReview: async (el) => { const id = el.dataset.id; const r = reviews.find((x) => x.id === id); const v = await ask({ title: 'Reply to review', ok: 'Save reply', fields: [{ id: 't', label: 'Reply', type: 'area', value: r.reply, required: true }] }); if (!v) return; r.reply = v.t; toast('Reply saved.'); renderPage(); sync(api.reviews.reply(id, v.t), 'save reply'); },
     approveReviews: () => { const ids = lvSelected('reviews'); ids.forEach((id) => { reviews.find((r) => r.id === id).status = 'Published'; }); LV.reviews.sel.clear(); toast('Published.'); rerender(); sync(api.reviews.bulk('approve', ids), 'approve reviews'); },
     rejectReviews: () => { const ids = lvSelected('reviews'); ids.forEach((id) => { reviews.find((r) => r.id === id).status = 'Rejected'; }); LV.reviews.sel.clear(); toast('Rejected.'); rerender(); sync(api.reviews.bulk('reject', ids), 'reject reviews'); },
-    newCoupon: async () => { const v = await ask({ title: 'New coupon', ok: 'Create', fields: [{ id: 'c', label: 'Code', required: true, placeholder: 'For example: SANKRANTI10' }, { id: 'k', label: 'Type', type: 'select', options: [['Percent', 'Percent off'], ['Flat', 'Rupees off']] }, { id: 'v', label: 'Value', value: '10' }, { id: 'm', label: 'Minimum order, ₹', value: '2000' }, { id: 's', label: 'Applies to', type: 'select', options: ['All products', 'First order', ...categories.map((c) => c.name)] }, { id: 'l', label: 'Usage limit', placeholder: 'Optional' }, { id: 'e', label: 'Ends on', type: 'date', min: iso(TODAY), hint: 'Optional — leave blank for no end date.' }] }); if (!v) return; const code = v.c.toUpperCase().replace(/\s+/g, ''); const value = Number(v.v); if (!/^[A-Z0-9]{3,20}$/.test(code)) return toast('Codes are 3 to 20 letters and numbers. Nothing was created.'); if (coupons.some((c) => c.code === code)) return toast(`${code} already exists.`); if (!(value > 0) || (v.k === 'Percent' && value > 90)) return toast('Enter a discount above zero, and no more than 90%.'); if (v.e && !/^\d{4}-\d{2}-\d{2}$/.test(v.e)) return toast('Use the date format YYYY-MM-DD.'); const doc = { code, kind: v.k, value, min: Number(v.m) || 0, scope: v.s, uses: 0, limit: Number(v.l) || null, ends: v.e || null, on: true }; coupons.unshift(doc); toast(`${code} created and active.`); renderPage(); sync(api.coupons.create({ _id: code, ...doc }), 'create coupon'); },
+    newCoupon: async () => {
+      const v = await ask({
+        title: 'New coupon',
+        ok: 'Create',
+        fields: [
+          { id: 'c', label: 'Code', required: true, placeholder: 'For example: SANKRANTI10' },
+          { id: 'k', label: 'Type', type: 'select', options: [['Percent', 'Percent off'], ['Flat', 'Rupees off']] },
+          { id: 'v', label: 'Value', value: '10' },
+          { id: 'm', label: 'Minimum order, ₹', value: '2000' },
+          { id: 's', label: 'Applies to', type: 'select', options: ['All products', 'First order', ...categories.map((c) => c.name)] },
+          { id: 'l', label: 'Usage limit', placeholder: 'Optional' },
+          { id: 'e', label: 'Ends on', type: 'date', min: iso(TODAY), hint: 'Optional — leave blank for no end date.' },
+        ],
+        // Per-field validation runs inside the dialog so errors render in
+        // red under the offending input instead of being dumped into a toast.
+        validate: (vals, mark) => {
+          const code = String(vals.c || '').toUpperCase().replace(/\s+/g, '');
+          const value = Number(vals.v);
+          if (!/^[A-Z0-9]{3,20}$/.test(code)) mark('c', 'Codes are 3 to 20 letters and numbers.');
+          else if (coupons.some((c) => c.code === code)) mark('c', `${code} already exists.`);
+          if (!(value > 0)) mark('v', 'Enter a discount above zero.');
+          else if (vals.k === 'Percent' && value > 90) mark('v', 'Percent discounts cap at 90%.');
+          if (vals.e && !/^\d{4}-\d{2}-\d{2}$/.test(vals.e)) mark('e', 'Use the date format YYYY-MM-DD.');
+          return true; // ask() stays open as long as mark() was called.
+        },
+      });
+      if (!v) return;
+      const code = v.c.toUpperCase().replace(/\s+/g, '');
+      const value = Number(v.v);
+      const doc = { code, kind: v.k, value, min: Number(v.m) || 0, scope: v.s, uses: 0, limit: Number(v.l) || null, ends: v.e || null, on: true };
+      coupons.unshift(doc);
+      toast(`${code} created and active.`);
+      renderPage();
+      sync(api.coupons.create({ _id: code, ...doc }), 'create coupon');
+    },
     deleteCoupon: async (el) => { const code = el.dataset.id; const ok = await ask({ title: `Delete ${code}?`, text: 'Orders that used it keep their discount.', ok: 'Delete', danger: true }); if (!ok) return; coupons.splice(coupons.findIndex((c) => c.code === code), 1); renderPage(); sync(api.coupons.remove(code), 'delete coupon'); },
     newArticle: () => articleDrawer('new'),
     saveArticle: (el) => {

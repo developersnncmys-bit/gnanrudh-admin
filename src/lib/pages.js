@@ -113,6 +113,26 @@ PAGES.orders = () => `<div class="page-head"><div><h1 class="h1">Orders</h1><p c
       { id: 'transit', label: 'In transit', filter: (o) => o.status === 'In transit' },
       { id: 'ndr', label: 'Delivery failed', filter: (o) => o.status === 'Delivery failed', hot: true, note: 'Failed delivery alerts (NDR) from Shiprocket. Choose reattempt, update address or return to origin.' },
       { id: 'delivered', label: 'Delivered', filter: (o) => o.status === 'Delivered' },
+      // Cancelled orders are kept in the DB (cancelOrder just flips the
+      // status flag, it doesn't delete) so the admin can audit who
+      // cancelled, when, and whether the piece reservation was released.
+      // Shown as its own tab instead of being hidden inside "All" so the
+      // volume is actually visible at a glance.
+      {
+        id: 'cancelled',
+        label: 'Cancelled',
+        // Catches every write path: admin cancel (`status='Cancelled'`),
+        // storefront self-cancel on an unpaid order, and the Razorpay
+        // "payment cancelled" flow (which stamps `payment.status`
+        // 'Cancelled' alongside the order status). Case-insensitive so
+        // a lower-case write from any older code path still shows up.
+        filter: (o) => {
+          const s = String(o.status || '').toLowerCase();
+          const ps = String(o.payment?.status || '').toLowerCase();
+          return s === 'cancelled' || ps === 'cancelled';
+        },
+        note: 'Cancelled by the customer or by staff. Items are released back to stock; refunds (if prepaid) are handled from the order detail.',
+      },
       { id: 'all', label: 'All', filter: null },
     ],
     filters: [

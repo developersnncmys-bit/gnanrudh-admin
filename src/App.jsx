@@ -450,6 +450,12 @@ function App() {
       // the user has started fixing the form.
       if (e.target.getAttribute('aria-invalid') === 'true' && String(e.target.value || '').trim()) {
         e.target.removeAttribute('aria-invalid');
+        // Also clear any `.field-err` sibling we injected next to it, whether
+        // it was added inline by the ask() dialog or by validateRequiredIn on
+        // a drawer form. Checking the immediate sibling is enough — both
+        // producers put the error right after the control.
+        const slot = e.target.nextElementSibling;
+        if (slot?.classList?.contains('field-err')) { slot.textContent = ''; slot.hidden = true; }
       }
     };
     document.addEventListener('input', onInput);

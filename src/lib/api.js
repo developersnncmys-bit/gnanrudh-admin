@@ -217,6 +217,13 @@ export const api = {
     update: (id, p) => patch(`/orders/${id}`, p),
     generateInvoice: (id) => post(`/orders/${id}/invoice`),
     confirmPayment: (id) => post(`/orders/${id}/confirm-payment`),
+    // Queries Razorpay for payment attempts against this order. Returns one of:
+    //   { outcome: 'confirmed', order, razorpay } — captured payment found (or
+    //     an authorized one just captured); order is now Paid + Label generated.
+    //   { outcome: 'pending',  razorpay } — no successful payment yet.
+    //   { outcome: 'failed',   razorpay } — only failed attempts exist.
+    //   { outcome: 'already-confirmed', order } — order moved on before we checked.
+    razorpayCheck: (id) => post(`/orders/${id}/razorpay-check`),
     setPaymentStatus: (id, status, ref) => post(`/orders/${id}/payment-status`, { status, ref }),
     cancel: (id) => post(`/orders/${id}/cancel`),
     ship: (id) => post(`/orders/${id}/ship`),

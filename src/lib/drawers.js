@@ -342,7 +342,7 @@ export function readProductForm() {
   else { p.occasions = []; p.occasion = ''; }
   set('length', 'pf-length'); set('blouseLength', 'pf-blouseLength'); set('hsn', 'pf-hsn'); set('gst', 'pf-gst', (v) => (v === '' ? '' : Number(v)));
   // PDP detail fields.
-  set('styleNo', 'pf-styleNo'); set('designNo', 'pf-designNo'); set('colourLabel', 'pf-colourLabel');
+  set('styleNo', 'pf-styleNo'); set('designNo', 'pf-designNo');
   set('packContains', 'pf-packContains'); set('manufacturedBy', 'pf-manufacturedBy');
   // PDP tab copy fields — speciality / style tip / fit tip / shipping note.
   set('speciality', 'pf-speciality'); set('styleTip', 'pf-styleTip'); set('fitTip', 'pf-fitTip'); set('shippingNote', 'pf-shippingNote');
@@ -388,7 +388,7 @@ export function productDrawer(id) {
   // colour. One choice covers every image in the set so every photo is
   // understood to be of the same colour.
   const mainImageVariantOpts = [['', 'Shared (all colours)'], ...p.variants.map((v) => [v.id, v.colour || 'Untitled colour'])];
-  openDrawer(`<div class="d-head">${thumb(p, 'lg')}<div class="grow"><h2 class="d-title" id="dTitle">${esc(p.name || 'New product')}</h2><div style="display:flex;gap:8px;align-items:center;margin-top:6px">${pill(p.status === 'Active' ? 'Live' : p.status, p.status === 'Active' ? 'ok' : 'warn', true)}<span class="small muted">${esc(c.name)}</span></div></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
+  openDrawer(`<div class="d-head">${p.id === 'new' ? '' : thumb(p, 'lg')}<div class="grow"><h2 class="d-title" id="dTitle">${esc(p.name || 'New product')}</h2><div style="display:flex;gap:8px;align-items:center;margin-top:6px">${pill(p.status === 'Active' ? 'Live' : p.status, p.status === 'Active' ? 'ok' : 'warn', true)}${p.id === 'new' ? '' : `<span class="small muted">${esc(c.name)}</span>`}</div></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
     <div class="d-body">
       <div class="d-sec"><h3>Images <span class="small faint">${plural(p.images, 'image')}</span></h3>
         <div class="photo-grid">${tiles}<label class="photo add" for="pf-files">${icon('plus', 18)}<span>Add images</span></label></div>
@@ -408,7 +408,9 @@ export function productDrawer(id) {
             <label class="btn btn-sec btn-sm" for="pf-video">${p.video ? 'Replace' : 'Add video'}</label>
           </span>
           <input type="file" id="pf-video" accept="video/*" hidden>
-        </div></div>
+        </div>
+        ${p.video && p.videoUrl ? `<div style="margin-top:10px"><video src="${esc(p.videoUrl)}" controls preload="metadata" playsinline style="display:block;width:100%;max-width:320px;max-height:240px;background:#000;border:1px solid var(--line);border-radius:6px"></video></div>` : ''}
+      </div>
       <div class="d-sec"><h3>Basics</h3><div class="form-grid">
         ${f('Name', 'pf-name', inp('pf-name', p.name, 'Colour, weave and the defining motif', true), '', true)}
         ${f('Category', 'pf-cat', sel('pf-cat', categories.map((x) => [x.id, x.name]), p.cat), 'Category is also the weave — product.weave is saved as the category name.')}
@@ -547,9 +549,8 @@ export function productDrawer(id) {
       <div class="d-sec"><h3>Product details (shown on the PDP)</h3><div class="form-grid">
         ${f('Style number', 'pf-styleNo', inp('pf-styleNo', p.styleNo, 'For example: SR-1001'), 'Shown under "Style No" on the Identity card. Leave blank to use the product id.')}
         ${f('Design number', 'pf-designNo', inp('pf-designNo', p.designNo, 'For example: KP1046900'), 'Shown under "Design No" on the Identity card.')}
-        ${f('Colour name', 'pf-colourLabel', inp('pf-colourLabel', p.colourLabel, 'For example: Peacock Blue'), 'Shown under "Color" on the Identity card. Leave blank to show the hex code.')}
         ${f('Pack contains', 'pf-packContains', inp('pf-packContains', p.packContains, 'For example: 1 Saree, 1 Unstitched Blouse Fabric'), 'Shown under "Pack Contains" on the Pack & Provenance card.')}
-        ${f('Manufactured by', 'pf-manufacturedBy', inp('pf-manufacturedBy', p.manufacturedBy, 'For example: House Of GnanRudh Pvt Ltd, Nellore'), 'Shown under "Manufactured" on the Pack & Provenance card.', true)}</div></div>
+        ${f('Manufactured by', 'pf-manufacturedBy', inp('pf-manufacturedBy', p.manufacturedBy, 'For example: House Of GnanRudh Pvt Ltd, Nellore'), 'Shown under "Manufactured" on the Pack & Provenance card.')}</div></div>
       <div class="d-sec"><h3>PDP tab copy</h3><div class="form-grid">
         ${f('Product Speciality', 'pf-speciality', `<textarea class="ctl" id="pf-speciality" placeholder="Short italic paragraph. Rendered on the Product Speciality tab.">${esc(p.speciality || '')}</textarea>`, 'Empty = the Product Speciality tab shows a placeholder, not the colour / care note.', true)}
         ${f('Style tip', 'pf-styleTip', `<textarea class="ctl" id="pf-styleTip" placeholder="How to style this saree — jewellery, blouse, occasion cues.">${esc(p.styleTip || '')}</textarea>`, 'Left column of the Style & Fit Tips tab.')}
