@@ -228,7 +228,12 @@ function exportList(route, listId, onlySelected) {
 const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
 
 /* ---------- Product save ---------- */
-function saveProduct(publish, rerender) {
+// `keepOpen` lets flows like `receiveStock` persist a brand-new product so
+// its variants acquire server-side SKUs, without the Save-and-close UX
+// side effects (closeDrawer, success toast). Returns a Promise so the
+// caller can await before firing follow-up work. Resolves `false` when
+// validation fails, resolves `true` on success, rejects on server error.
+function saveProduct(publish, rerender, { keepOpen = false, silentSuccess = false } = {}) {
   readProductForm();
   const p = getDraftP();
   const err = !p.name ? 'Give the product a name.'
@@ -247,7 +252,7 @@ function saveProduct(publish, rerender) {
     const e = document.getElementById('pf-error');
     if (e) { e.textContent = err; e.hidden = false; e.scrollIntoView({ block: 'nearest' }); }
     toast(err);
-    return;
+    return Promise.resolve(false);
   }
   // CAT-01/02/07: soft hygiene warnings — surface via toast so staff can ignore if
   // intentional, but the first mistake is visible without a round-trip.
@@ -289,17 +294,21 @@ function saveProduct(publish, rerender) {
     products.unshift(p); PROD[p.id] = p;
   } else Object.assign(PROD[p.id], p);
   PROD[p.id].variants.forEach((v, i) => { if (!v.sku) v.sku = `${p.cat.slice(0, 3).toUpperCase()}-${p.id.slice(1)}${i}`; });
-  closeDrawer(); rerender();
+  if (!keepOpen) { closeDrawer(); rerender(); }
   // Toast reflects the actual saved status instead of assuming publish =
   // Active. Hidden / Draft saves get an honest message so staff know the
-  // storefront won't show the product.
-  toast(
-    p.status === 'Active'
-      ? `“${p.name}” is live on the store.`
-      : p.status === 'Hidden'
-        ? `“${p.name}” saved as hidden — not shown on the store.`
-        : `“${p.name}” saved as a draft.`,
-  );
+  // storefront won't show the product. Suppressed when called internally
+  // (e.g. by receiveStock's auto-save) so the admin doesn't see a
+  // "saved as a draft" notice on top of the stock-received toast.
+  if (!silentSuccess) {
+    toast(
+      p.status === 'Active'
+        ? `“${p.name}” is live on the store.`
+        : p.status === 'Hidden'
+          ? `“${p.name}” saved as hidden — not shown on the store.`
+          : `“${p.name}” saved as a draft.`,
+    );
+  }
   // INV-02: strip variant.stock from the payload so the client can't dictate stock.
   // Stock is derived from pieces; the backend treats the field as read-only.
   // Stock is never collected during variant creation — it's added later
@@ -312,19 +321,23 @@ function saveProduct(publish, rerender) {
   // On failure, roll back the optimistic change so the UI matches the server:
   // new products are spliced out entirely; edits re-fetch the untouched doc so
   // the local draft (e.g. a deleted variant) doesn't linger until the next reload.
-  saveCall
+  return saveCall
     .then(() => refresh('products'))
-    .then(() => rerender())
+    .then(() => { rerender(); return true; })
     .catch((err) => {
       if (wasNew) {
         const i = products.findIndex((x) => x.id === p.id);
         if (i >= 0) products.splice(i, 1);
         delete PROD[p.id];
+        // Restore the draft's 'new' id so a retry doesn't collide with
+        // the just-rolled-back allocation.
+        p.id = 'new';
         rerender();
       } else {
         refresh('products').then(() => rerender()).catch(() => {});
       }
       toast(`Failed to save product: ${err.message}`);
+      throw err;
     });
 }
 
@@ -821,10 +834,12 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const dp = getDraftP();
       const i = Number(el.dataset.i);
       const v = dp.variants[i];
-      if (!v?.sku) return toast('Save the product first so the SKU exists.');
+      if (!v) return;
       const answer = await ask({
         title: `Receive stock — ${v.colour}${v.size ? `, size ${v.size}` : ''}`,
-        text: `Creates N new ${v.sku} pieces with fresh barcodes. Print them from the Barcodes page.`,
+        text: v.sku
+          ? `Creates N new ${v.sku} pieces with fresh barcodes. Print them from the Barcodes page.`
+          : 'The product will be saved first so a SKU can be assigned, then the new pieces are created with fresh barcodes.',
         ok: 'Receive',
         fields: [
           { id: 'q', label: 'Units received', value: '1', required: true },
@@ -834,11 +849,25 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       if (!answer) return;
       const qty = Math.max(0, parseInt(answer.q, 10) || 0);
       if (!qty) return toast('Enter a positive quantity.');
+      // Auto-save a new / unsaved product first so the backend can look up
+      // the variant by its vid and generate piece codes from the server's
+      // persisted SKU. `keepOpen: true` leaves the drawer mounted so the
+      // follow-up receive + redraw flow lands on the same context.
+      if (!v.sku || dp.id === 'new') {
+        const saved = await saveProduct(false, rerender, { keepOpen: true, silentSuccess: true }).catch(() => false);
+        if (!saved) return; // validation failed or server rejected — toast was already shown
+      }
+      // After auto-save, the variant row we captured may have a new SKU
+      // mutated in place. Re-read it so pid/vid are current before the
+      // receive call fires.
+      const freshV = getDraftP().variants[i];
+      const freshPid = getDraftP().id;
+      if (!freshV || !freshPid || freshPid === 'new') return toast('Could not finalise the product save before receiving stock.');
       try {
-        await api.pieces.receive({ pid: dp.id, vid: v.id, qty, note: answer.n });
+        await api.pieces.receive({ pid: freshPid, vid: freshV.id, qty, note: answer.n });
         await Promise.all([refresh('pieces'), refresh('movements'), refresh('products')]);
         productDrawer('__redraw');
-        toast(`Received ${plural(qty, 'piece')} of ${v.colour}.`);
+        toast(`Received ${plural(qty, 'piece')} of ${freshV.colour}.`);
       } catch (err) {
         toast(`Failed to receive stock: ${err.message}`);
       }
