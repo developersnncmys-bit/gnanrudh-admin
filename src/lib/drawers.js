@@ -524,6 +524,7 @@ export function productDrawer(id) {
           // gets rewritten when pieces are received/shipped, which was why
           // this drawer always showed 0.
           const liveStock = piecesOf(v.id, 'In stock').length;
+          const stockCell = `<span class="strong">${nf.format(liveStock)}</span>`;
           const colSpan = 4 + (c.sized ? 1 : 0);
           const vImages = Array.isArray(v.imageUrls) ? v.imageUrls : [];
           // Per-variant image strip: thumbnails + "Add images" trigger. Lives
@@ -539,7 +540,7 @@ export function productDrawer(id) {
               <input type="file" id="pf-vimg-${i}" accept="image/*" multiple hidden data-vimg-i="${i}">
             </div>
           </td></tr>`;
-          return `<tr><td style="padding-left:0"><span class="who">${swv(v, p)}<span>${esc(v.colour)}</span></span></td>${c.sized ? `<td>${esc(v.size || '—')}</td>` : ''}<td class="muted">${esc(v.sku || 'Assigned on save')}</td><td class="r"><span class="strong">${nf.format(liveStock)}</span></td><td class="r" style="padding-right:0"><button type="button" class="btn btn-sec btn-sm" data-act="receiveStock" data-i="${i}" ${v.sku ? '' : 'disabled title="Save the product first to assign a SKU"'}>Receive stock</button>${p.variants.length > 1 ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeVariant" data-i="${i}" aria-label="Remove ${esc(v.colour)}">${icon('x', 14)}</button>` : ''}</td></tr>${imagesRow}`;
+          return `<tr><td style="padding-left:0"><span class="who">${swv(v, p)}<span>${esc(v.colour)}</span></span></td>${c.sized ? `<td>${esc(v.size || '—')}</td>` : ''}<td class="muted">${esc(v.sku || 'Assigned on save')}</td><td class="r">${stockCell}</td><td class="r" style="padding-right:0"><button type="button" class="btn btn-sec btn-sm" data-act="receiveStock" data-i="${i}" ${v.sku ? '' : 'disabled title="Save the product first to assign a SKU"'}>Receive stock</button>${p.variants.length > 1 ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeVariant" data-i="${i}" aria-label="Remove ${esc(v.colour)}">${icon('x', 14)}</button>` : ''}</td></tr>${imagesRow}`;
         }).join('')}</tbody></table></div>
       ${c.saree ? `<div class="d-sec"><h3>Craft &amp; material</h3><div class="form-grid">
         ${f('Zari', 'pf-zari', sel('pf-zari', ['Pure zari', 'Tested zari', 'No zari'], p.zari || 'No zari'))}

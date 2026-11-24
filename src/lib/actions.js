@@ -302,36 +302,18 @@ function saveProduct(publish, rerender) {
   );
   // INV-02: strip variant.stock from the payload so the client can't dictate stock.
   // Stock is derived from pieces; the backend treats the field as read-only.
+  // Stock is never collected during variant creation — it's added later
+  // via the Receive stock button on each row (which hits the backend's
+  // pieces.receive endpoint to mint barcoded Piece records).
   const payload = { ...p };
   delete payload.id;
-  payload.variants = p.variants.map((v) => { const { stock, _starterStock, ...rest } = v; return rest; });
-  // Capture any starter stock entered in the Add Colour modal so we can
-  // create matching pieces after the save lands. Clean the field off the
-  // local draft so repeat saves don't double-receive.
-  const starterReceives = p.variants
-    .filter((v) => (v._starterStock || 0) > 0)
-    .map((v) => ({ vid: v.id, qty: v._starterStock, colour: v.colour }));
-  p.variants.forEach((v) => { delete v._starterStock; });
+  payload.variants = p.variants.map((v) => { const { stock, ...rest } = v; return rest; });
   const saveCall = wasNew ? api.products.create({ _id: p.id, ...payload }) : api.products.update(p.id, payload);
   // On failure, roll back the optimistic change so the UI matches the server:
   // new products are spliced out entirely; edits re-fetch the untouched doc so
   // the local draft (e.g. a deleted variant) doesn't linger until the next reload.
   saveCall
-    .then(async () => {
-      // Create the pieces that back any starter stock the admin typed in
-      // the Add Colour modal. Runs after save so the variant's SKU exists
-      // on the backend. Failures surface as a toast but don't roll back.
-      for (const r of starterReceives) {
-        try {
-          await api.pieces.receive({ pid: p.id, vid: r.vid, qty: r.qty, note: 'Initial stock from Add colour' });
-        } catch (err) {
-          toast(`Failed to receive stock for ${r.colour}: ${err.message}`);
-        }
-      }
-      const refreshes = [refresh('products')];
-      if (starterReceives.length) refreshes.push(refresh('pieces'), refresh('movements'));
-      return Promise.all(refreshes);
-    })
+    .then(() => refresh('products'))
     .then(() => rerender())
     .catch((err) => {
       if (wasNew) {
@@ -772,12 +754,13 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       readProductForm();
       const dp = getDraftP();
       const c = CAT[dp.cat];
-      const v = await ask({ title: 'Add a colour', ok: 'Add colour', fields: [{ id: 'c', label: 'Colour', type: 'color', value: '#1f5f7a' }, { id: 'n', label: 'Colour name', required: true, placeholder: 'For example: Peacock blue' }, ...(c.sized ? [{ id: 's', label: 'Size', type: 'select', options: SIZES }] : []), { id: 'q', label: 'Stock', value: '1' }] });
+      // Colour-only create flow. Stock lives on barcoded Pieces and is
+      // added via the Receive stock button on each row (which needs the
+      // server-assigned SKU to generate piece codes) — the modal no
+      // longer collects it to avoid a "typed 10, see 0" confusion.
+      const v = await ask({ title: 'Add a colour', ok: 'Add colour', fields: [{ id: 'c', label: 'Colour', type: 'color', value: '#1f5f7a' }, { id: 'n', label: 'Colour name', required: true, placeholder: 'For example: Peacock blue' }, ...(c.sized ? [{ id: 's', label: 'Size', type: 'select', options: SIZES }] : [])] });
       if (!v) return;
-      // `_starterStock` is a client-only field — saveProduct() reads it,
-      // strips it from the payload, and triggers a pieces.receive after
-      // the save succeeds so the stock the admin typed actually lands.
-      dp.variants.push({ id: `nv${Date.now()}`, colour: v.n.trim(), hex: v.c, size: v.s || null, stock: 0, _starterStock: Math.max(0, parseInt(v.q, 10) || 0), sku: '', imageUrls: [] });
+      dp.variants.push({ id: `nv${Date.now()}`, colour: v.n.trim(), hex: v.c, size: v.s || null, stock: 0, sku: '', imageUrls: [] });
       productDrawer('__redraw');
     },
     addVariantFromImage: async () => {
@@ -788,6 +771,8 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       readProductForm();
       const dp = getDraftP();
       const c = CAT[dp.cat];
+      // Same colour-only flow as `addVariant`. Stock is added via the
+      // Receive stock button on the variant row after the first save.
       const v = await ask({
         title: 'Add a colour',
         ok: 'Add colour',
@@ -795,11 +780,10 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
           { id: 'c', label: 'Colour', type: 'color', value: '#ffffff' },
           { id: 'n', label: 'Colour name', required: true, placeholder: 'For example: Ivory white' },
           ...(c.sized ? [{ id: 's', label: 'Size', type: 'select', options: SIZES }] : []),
-          { id: 'q', label: 'Stock', value: '1' },
         ],
       });
       if (!v) return;
-      const newVariant = { id: `nv${Date.now()}`, colour: v.n.trim(), hex: v.c, size: v.s || null, stock: 0, _starterStock: Math.max(0, parseInt(v.q, 10) || 0), sku: '', imageUrls: [] };
+      const newVariant = { id: `nv${Date.now()}`, colour: v.n.trim(), hex: v.c, size: v.s || null, stock: 0, sku: '', imageUrls: [] };
       dp.variants.push(newVariant);
       dp.imageVariant = newVariant.id;
       productDrawer('__redraw');
