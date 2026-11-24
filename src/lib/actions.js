@@ -530,6 +530,23 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     ndrReattempt: (el) => { const o = ORD[el.dataset.id]; o.status = 'In transit'; o.ndr = null; shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'NDR action sent: reattempt', at: new Date().toISOString(), courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' }); toast('Reattempt requested through Shiprocket.'); orderDrawer(o.id); renderPage(); renderNav(); sync(api.orders.ndr(o.id, { action: 'reattempt' }), 'request reattempt'); },
     ndrAddress: async (el) => { const o = ORD[el.dataset.id]; const v = await ask({ title: 'Update delivery address', ok: 'Send to Shiprocket', fields: [{ id: 'a', label: 'Address', type: 'area', required: true }, { id: 'pin', label: 'Pincode', value: o.ship.pin, required: true }, { id: 'p', label: 'Phone for the courier', value: CUST[o.cid].phone }] }); if (!v) return; if (!/^\d{6}$/.test(v.pin)) return toast('That pincode isn’t 6 digits. Nothing was sent.'); o.ship.pin = v.pin; o.status = 'In transit'; o.ndr = null; shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'NDR action sent: new address', at: new Date().toISOString(), courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' }); toast('Address updated with the courier through Shiprocket.'); orderDrawer(o.id); renderPage(); renderNav(); sync(api.orders.ndr(o.id, { action: 'address', pin: v.pin, address: v.a, phone: v.p }), 'update address'); },
     ndrRto: async (el) => { const ok = await ask({ title: 'Return to origin?', text: 'The parcel comes back to your warehouse. Stock is restored when it arrives. Forward and return freight are charged by Shiprocket.', ok: 'Return to origin', danger: true }); if (!ok) return; const o = ORD[el.dataset.id]; o.status = 'Returned to origin'; o.ndr = null; shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'RTO initiated', at: new Date().toISOString(), courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' }); toast('Return to origin requested.'); orderDrawer(o.id); renderPage(); renderNav(); sync(api.orders.ndr(o.id, { action: 'rto' }), 'return to origin'); },
+    markDelivered: async (el) => {
+      const id = el.dataset.id;
+      const o = ORD[id]; if (!o) return;
+      const ok = await ask({
+        title: `Mark ${id} as delivered?`,
+        text: 'Records the parcel as delivered. This starts the return window (default 7 days from today). Use only if the courier confirms delivery outside the webhook flow.',
+        ok: 'Mark delivered',
+      });
+      if (!ok) return;
+      const at = new Date().toISOString();
+      o.status = 'Delivered';
+      o.deliveredAt = at;
+      shipLog.unshift({ id: `SL${shipLog.length}`, oid: o.id, type: 'Delivered (marked by admin)', at, courier: o.ship.courier, awb: o.ship.awb, webhook: 'Received' });
+      toast('Marked as delivered. Return window started.');
+      orderDrawer(o.id); renderPage(); renderNav();
+      sync(api.orders.markDelivered(o.id, at).then((srv) => { Object.assign(o, srv); o.id = srv._id || o.id; }), 'mark delivered');
+    },
     refundOrder: async (el) => { const o = ORD[el.dataset.id]; const v = await ask({ title: `Refund ${o.id}`, text: 'Refunded through Razorpay to the original payment method. A GST credit note is generated.', ok: 'Refund', fields: [{ id: 'amt', label: 'Amount, ₹', value: String(o.total) }] }); if (!v) return; const amt = Number(v.amt.replace(/[^\d.]/g, '')); if (!(amt > 0 && amt <= o.total)) return toast(`Enter an amount between ₹1 and ${inr(o.total)}.`); o.payment.status = 'Refunded'; o.creditNote = `${SETTINGS.gst.cn}${String(bumpCn()).padStart(4, '0')}`; toast(`${inr(amt)} refund sent to Razorpay. Credit note ${o.creditNote} generated.`); orderDrawer(o.id); renderPage(); sync(api.orders.refund(o.id, amt).then((srv) => { Object.assign(o, srv); o.id = srv._id || o.id; }), 'refund'); },
     approveReturn: (el) => { const r = returns.find((x) => x.id === el.dataset.id); r.status = 'Pickup scheduled'; r.awb = `R${between(10000000, 99999999)}`; shipLog.unshift({ id: `SL${shipLog.length}`, oid: r.oid, type: 'Reverse pickup created', at: new Date().toISOString(), courier: 'Delhivery', awb: r.awb, webhook: 'Received' }); toast('Reverse pickup raised with Shiprocket. She gets the pickup details by email.'); returnDrawer(r.id); renderPage(); renderNav(); sync(api.returns.approve(r.id).then((srv) => { Object.assign(r, srv); r.id = srv._id || r.id; }), 'approve return'); },
     markPicked: (el) => { const id = el.dataset.id; returns.find((x) => x.id === id).status = 'Picked up'; returnDrawer(id); renderPage(); sync(api.returns.picked(id), 'mark picked up'); },

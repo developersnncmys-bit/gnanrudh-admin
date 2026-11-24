@@ -220,6 +220,7 @@ export const api = {
     setPaymentStatus: (id, status, ref) => post(`/orders/${id}/payment-status`, { status, ref }),
     cancel: (id) => post(`/orders/${id}/cancel`),
     ship: (id) => post(`/orders/${id}/ship`),
+    markDelivered: (id, at) => post(`/orders/${id}/delivered`, at ? { at } : {}),
     ndr: (id, body) => post(`/orders/${id}/ndr`, body),
     refund: (id, amount) => post(`/orders/${id}/refund`, { amount }),
   },

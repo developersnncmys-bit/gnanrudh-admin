@@ -60,7 +60,8 @@ export function orderDrawer(id) {
       ['markPaymentReceived', 'Mark payment received', 'btn-pri'],
       ['checkPayment', 'Check with Razorpay', 'btn-sec'],
     ],
-    'Label generated': [['printLabel', 'Print label', 'btn-sec']],
+    'Label generated': [['printLabel', 'Print label', 'btn-sec'], ['markDelivered', 'Mark delivered', 'btn-pri']],
+    'In transit': [['markDelivered', 'Mark delivered', 'btn-pri']],
     'Delivery failed': [['ndrRto', 'Return to origin', 'btn-bad'], ['ndrAddress', 'Update address', 'btn-pri']],
     Delivered: o.payment.method !== 'Cash on delivery' && o.payment.status === 'Paid' ? [['refundOrder', 'Refund', 'btn-sec']] : [],
   }[o.status] || [];
