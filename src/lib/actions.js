@@ -1420,8 +1420,8 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const sampleCat = categories[0]?.name || 'Mysore Silk';
       downloadCSV('products-template.csv', [
         ['name', 'category', 'selling_price', 'mrp', 'qty', 'weave', 'occasions', 'colour', 'hex', 'size', 'sku', 'status'],
-        ['Peacock blue Mysore silk', sampleCat, '12500', '15000', '10', 'Mysore Silk', 'Festive|Everyday', 'Peacock', '#1f5f7a', '', '', 'Draft'],
-        ['Ivory Banarasi with gold pallu', 'Banarasi', '28000', '32000', '5', 'Banarasi', 'Bridal', 'Ivory', '#f6f0e6', '', '', 'Draft'],
+        ['Peacock blue Mysore silk', sampleCat, '12500', '15000', '10', 'Mysore Silk', 'Festive|Everyday', 'Peacock', '#1f5f7a', '', '', 'Active'],
+        ['Ivory Banarasi with gold pallu', 'Banarasi', '28000', '32000', '5', 'Banarasi', 'Bridal', 'Ivory', '#f6f0e6', '', '', 'Active'],
         ['', '', '', '', '', '', '', '', '', '', '', ''],
       ]);
     },
@@ -1439,7 +1439,7 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
           <form method="dialog" class="dlg">
             <h3 class="dlg-title">Bulk add products</h3>
             <p class="small muted" style="margin:4px 0 14px">
-              Upload a CSV of new products. Each row creates one product with an initial colour variant; images are added later from the product's drawer, so rows save as <b>Draft</b> by default. Download the template for the exact columns.
+              Upload a CSV of new products. Each row creates one product with an initial colour variant and goes <b>live on the store immediately</b>. Images are added later from the product&apos;s drawer; until then the fallback image shows on the card. Set the <code>status</code> column to <b>Draft</b> for any row you want to stage instead of publish. Download the template for the exact columns.
             </p>
             <div id="bapDrop" class="br-drop" tabindex="0" role="button" aria-label="Drop CSV here or click to pick a file">
               <div class="br-drop-ico">${icon('dl', 22)}</div>
@@ -1766,6 +1766,43 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const batchCount = Math.max(1, Math.ceil(queue.length / size));
       const idx = getLabelBatchIndex();
       if (idx + 1 < batchCount) { setLabelBatchIndex(idx + 1); renderPage(); }
+    },
+
+    // Orphan-pieces cleanup: preview counts without changing anything.
+    cleanupOrphansDryRun: async () => {
+      try {
+        const res = await api.pieces.cleanupOrphans({ dryRun: true });
+        const { pieceCount = 0, movementCount = 0, orphanPids = [], orphanVids = [] } = res || {};
+        if (!pieceCount) return toast('No orphan pieces found. Nothing to clean up.');
+        const pidNote = orphanPids.length ? ` across ${plural(orphanPids.length, 'missing product')}` : '';
+        const vidNote = orphanVids.length ? `, ${plural(orphanVids.length, 'missing variant')}` : '';
+        toast(`Preview: would delete ${plural(pieceCount, 'piece')} + ${plural(movementCount, 'audit row')}${pidNote}${vidNote}. Click "Delete orphans" to run it.`);
+      } catch (err) {
+        toast(`Preview failed: ${err.message}`);
+      }
+    },
+
+    // Orphan-pieces cleanup: actually delete. Confirms first — this hard-
+    // removes rows (not a reversible status flip), so the admin double-opts.
+    cleanupOrphansRun: async () => {
+      const ok = await ask({
+        title: 'Delete orphan pieces?',
+        text: 'Hard-deletes pieces + their audit rows whose product or variant no longer exists. Pieces still attached to a live product are NOT touched. This cannot be undone.',
+        ok: 'Delete orphans',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        const res = await api.pieces.cleanupOrphans({ dryRun: false });
+        const { pieceCount = 0, movementCount = 0 } = res || {};
+        toast(pieceCount
+          ? `Deleted ${plural(pieceCount, 'piece')} and ${plural(movementCount, 'audit row')}.`
+          : 'Nothing to clean up.');
+        await refresh('pieces');
+        renderPage(); renderNav();
+      } catch (err) {
+        toast(`Cleanup failed: ${err.message}`);
+      }
     },
 
     printPiece: (el) => {

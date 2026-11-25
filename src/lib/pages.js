@@ -996,6 +996,11 @@ BC_VIEW.setup = () => {
         <li><span class="grow">MRP inclusive of all taxes, net quantity, packer’s name and address, and customer care contact.</span></li>
         <li><span class="grow">The barcode and the piece code in plain text, so a piece can be keyed in if a label is damaged.</span></li>
       </ul><p class="sub" style="margin-top:8px">Confirm the declarations required on your labels with your accountant or a Legal Metrology consultant.</p></div></section>
+    <section class="panel" style="grid-column:1/-1"><div class="panel-head"><div><h2 class="h2">Cleanup · orphan pieces</h2><p>Removes barcode pieces (and their stock-movement audit rows) whose product or colour variant no longer exists. Use this after a failed bulk import or any direct-DB edit. Safe to run anytime — pieces still attached to a live product are never touched.</p></div></div>
+      <div class="panel-body"><div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn btn-sec" data-act="cleanupOrphansDryRun">${icon('search')}Preview (dry run)</button>
+        <button type="button" class="btn btn-bad" data-act="cleanupOrphansRun">${icon('trash')}Delete orphans</button>
+      </div><p class="sub" style="margin-top:8px">Dry run reports counts without changing anything. Delete runs the operation and returns the final counts.</p></div></section>
   </div>`;
 };
 

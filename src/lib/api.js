@@ -292,6 +292,11 @@ export const api = {
     bulkPrinted: (codes) => post('/pieces/bulk/printed', { codes }),
     receive: (body) => post('/pieces/receive', body),
     reconcile: (pid) => post(`/pieces/reconcile/${encodeURIComponent(pid)}`),
+    // Cleanup: hard-removes pieces whose product or variant no longer exists,
+    // plus their Movement audit rows. Default dry-run returns counts without
+    // deleting; pass { dryRun: false } to actually wipe.
+    cleanupOrphans: ({ dryRun = true } = {}) =>
+      post(`/pieces/admin/cleanup-orphans?dryRun=${dryRun ? '1' : '0'}`),
     reserveOrder: (oid) => post(`/pieces/order/${encodeURIComponent(oid)}/reserve`),
     releaseOrder: (oid, why) => post(`/pieces/order/${encodeURIComponent(oid)}/release`, { why }),
     shipOrder: (oid, codes) => post(`/pieces/order/${encodeURIComponent(oid)}/ship`, { codes }),
