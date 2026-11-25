@@ -8,7 +8,7 @@ import {
   orders, ORD, jobs, STITCH_STAGES, returns, POLICY, shipLog, COURIERS, coupons,
   reviews, journal, SCENES, PAGES_CMS, SETTINGS, CRM, featured, setFeatured,
   bumpInv, bumpCn, computeCRM, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS,
-  pieces, PIECE, varRef, refresh,
+  pieces, PIECE, varRef, refresh, ensureMovementsLoaded,
 } from './data.js';
 import { ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, LV, lvSelected } from './renderers.js';
 import {
@@ -1410,7 +1410,18 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     testConnection: (el) => toast(`${el.dataset.id} responded. The connection is working.`),
 
     /* ---------- Barcodes & Stock ---------- */
-    bcTab: (el) => { setBcTab(el.dataset.v); renderPage(); },
+    bcTab: (el) => {
+      const v = el.dataset.v;
+      setBcTab(v);
+      renderPage();
+      // Lazy-load the movements collection the first time the operator
+      // opens the Stock movements tab. Idempotent in data.js, so clicking
+      // the tab repeatedly in one session only fires a single network
+      // request. Re-renders once data lands so the empty state is replaced.
+      if (v === 'moves') {
+        ensureMovementsLoaded().then(() => renderPage());
+      }
+    },
     labelFmt: (el) => { setLabelFmt(el.dataset.v); renderPage(); },
 
     // Downloads a product-creation CSV template. Images are intentionally

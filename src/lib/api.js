@@ -55,15 +55,44 @@ async function request(path, { method = 'GET', body, query } = {}) {
   return ct.includes('application/json') ? res.json() : res.text();
 }
 
-// PERF-03: the backend now caps lists at 100 rows per request. Keep the existing
-// callers working by paging through until the server returns a short batch. When
-// PERF-02 (`/dashboard/summary` + lazy module loads) lands, this helper disappears.
-const PAGE_SIZE = 100;
+// PERF-03: backend caps lists at PAGE_SIZE rows per request (bumped to 500
+// server-side). Paging strategy:
+//   1. Fetch page 0 to learn the collection's total.
+//   2. If one page covered it, done (no second round-trip).
+//   3. Otherwise fire every remaining page in PARALLEL — one network
+//      latency instead of N sequential waits. For a 9,000-row collection
+//      this collapses ~90 serial round-trips (~9 s) into one first call
+//      plus ~17 parallel calls (~200 ms).
+const PAGE_SIZE = 500;
+const PARALLEL_CAP = 1000; // sanity cap so a misreported total can't blow up the browser
 async function list(path, query = {}) {
-  const items = [];
-  let skip = 0;
-  // Hard safety stop so a misconfigured endpoint can't loop forever.
-  for (let page = 0; page < 1000; page += 1) {
+  const first = await request(path, { query: { limit: PAGE_SIZE, skip: 0, ...query } });
+  const items = Array.isArray(first.items) ? [...first.items] : [];
+  // Partial first batch → we're done (last page is always short).
+  if (items.length < PAGE_SIZE) return items;
+
+  // Some endpoints report `total` as the whole-collection count; some lie
+  // and set it to items.length. We trust it ONLY when it exceeds the first
+  // page. Otherwise probe serially (the pre-parallel behaviour) so a
+  // misreporting endpoint can't cause silent truncation.
+  const total = Number.isFinite(first.total) && first.total > items.length ? first.total : null;
+
+  if (total !== null) {
+    const pages = [];
+    for (let skip = PAGE_SIZE; skip < total && pages.length < PARALLEL_CAP; skip += PAGE_SIZE) {
+      pages.push(request(path, { query: { limit: PAGE_SIZE, skip, ...query } }));
+    }
+    const rest = await Promise.all(pages);
+    for (const d of rest) {
+      const batch = Array.isArray(d.items) ? d.items : [];
+      items.push(...batch);
+    }
+    return items;
+  }
+
+  // Fallback: serial paging. Stops the first time a batch comes back short.
+  let skip = PAGE_SIZE;
+  for (let page = 1; page < PARALLEL_CAP; page += 1) {
     const d = await request(path, { query: { limit: PAGE_SIZE, skip, ...query } });
     const batch = Array.isArray(d.items) ? d.items : [];
     items.push(...batch);
@@ -302,7 +331,11 @@ export const api = {
     shipOrder: (oid, codes) => post(`/pieces/order/${encodeURIComponent(oid)}/ship`, { codes }),
   },
   movements: {
-    list: (limit = 2000) => list('/movements', { limit }),
+    // Uses the shared `list()` which now parallelises page fetches and
+    // respects the server-side PAGE_MAX cap. The old `limit=2000` override
+    // was clamped by the server anyway — dropping it keeps one source of
+    // truth for page size.
+    list: () => list('/movements'),
   },
 };
 

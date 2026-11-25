@@ -9,7 +9,7 @@ import {
   categories, CAT, COLORS, OCCASIONS, OCCASIONS_FULL, SIZES, products, PROD, stockOf, customers, CUST,
   orders, ORD, jobs, STITCH_STAGES, returns, POLICY, shipLog, COURIERS, coupons,
   reviews, journal, SCENES, PAGES_CMS, SETTINGS, M_FIELDS, featured, setFeatured,
-  pieces, PIECE, PIECE_TONE, piecesOf, moves, varRef,
+  pieces, PIECE, PIECE_TONE, piecesOf, moves, varRef, ensureMovementsLoaded,
 } from './data.js';
 import {
   ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, thumb, prodCell, variantOf, seg, gstLines,
@@ -778,6 +778,13 @@ export function pieceDrawer(code) {
   const p = PROD[u.pid];
   const r = varRef(u.vid);
   const v = r?.v;
+  // Movements are deferred from boot (see data.js bootstrap). Kick off the
+  // lazy load so the piece history fills in moments after the drawer opens
+  // if the operator hasn't visited Stock movements yet. Re-render once
+  // data lands. Idempotent — repeat opens don't duplicate the request.
+  if (!moves.length) {
+    ensureMovementsLoaded().then(() => pieceDrawer(code));
+  }
   const hist = moves.filter((m) => m.code === (u.code || u.id));
   const cat = p && CAT[p.cat];
   const params = [

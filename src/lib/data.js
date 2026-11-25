@@ -200,9 +200,16 @@ export function computeCRM() {
 }
 
 /* ---------- Bootstrap: fetch everything, then populate ---------- */
+//
+// PERF: `movements` (stock audit trail) deliberately excluded — the
+// collection grows unbounded (37K+ rows in this install, ~19 serial 2K-page
+// requests at ~37 MB). Only the "Stock movements" tab and the piece-history
+// section of the piece drawer read it, so we lazy-load via
+// ensureMovementsLoaded() the first time either entry point opens. See
+// actions.js `bcTab` and drawers.js `pieceDrawer`.
 export async function bootstrap() {
   const [
-    cats, prods, custs, ords, rets, ship, cpns, revs, jrnl, pgs, scns, feat, sett, occs, pricesList, pcs, mvs, slides, banners,
+    cats, prods, custs, ords, rets, ship, cpns, revs, jrnl, pgs, scns, feat, sett, occs, pricesList, pcs, slides, banners,
   ] = await Promise.all([
     api.categories.list(), api.products.list(), api.customers.list(),
     api.orders.list(), api.returns.list(), api.shipping.list(),
@@ -211,7 +218,6 @@ export async function bootstrap() {
     api.occasions.list().catch(() => []),
     api.priceRanges.list().catch(() => []),
     api.pieces.list().catch(() => []),
-    api.movements.list().catch(() => []),
     api.heroSlides.list().catch(() => []),
     api.homeBanners.list().catch(() => []),
   ]);
@@ -233,7 +239,7 @@ export async function bootstrap() {
   refill(HERO_SLIDES, (slides || []).map(norm));
   refill(HOME_BANNERS, (banners || []).map(norm));
   refill(pieces, (pcs || []).map((u) => ({ ...norm(u), code: u._id })));
-  refill(moves, (mvs || []).map(norm));
+  // moves intentionally left empty — populated lazily by ensureMovementsLoaded().
 
   setFeatured(Array.isArray(feat?.ids) ? feat.ids : []);
 
@@ -274,4 +280,30 @@ export async function refresh(resource) {
     movements:  () => api.movements.list().then((d)  => { refill(moves, d.map(norm)); }),
   };
   return map[resource]?.();
+}
+
+// Lazy loader for the movements collection. Idempotent — the first caller
+// fires the network request, every subsequent caller (across the whole
+// session) awaits the SAME in-flight promise so a flurry of UI events
+// (tab click, piece drawer open) only produce one fetch. Resolves to the
+// moves array for convenience; most callers ignore the return value and
+// just read `moves` after awaiting.
+let movementsLoadPromise = null;
+export function ensureMovementsLoaded() {
+  if (moves.length) return Promise.resolve(moves);
+  if (movementsLoadPromise) return movementsLoadPromise;
+  movementsLoadPromise = api.movements.list()
+    .then((d) => {
+      refill(moves, (d || []).map(norm));
+      return moves;
+    })
+    .catch((err) => {
+      // On failure, null the promise so a retry can re-attempt. Don't
+      // throw at the UI — the caller can decide to toast or silently fall
+      // back to an empty history.
+      console.warn('[data] movements lazy-load failed:', err?.message || err);
+      movementsLoadPromise = null;
+      return moves;
+    });
+  return movementsLoadPromise;
 }
