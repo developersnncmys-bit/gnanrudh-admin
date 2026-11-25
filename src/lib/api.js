@@ -64,6 +64,7 @@ async function request(path, { method = 'GET', body, query } = {}) {
 //      this collapses ~90 serial round-trips (~9 s) into one first call
 //      plus ~17 parallel calls (~200 ms).
 const PAGE_SIZE = 500;
+const PARALLEL_LIMIT = 6; // concurrent in-flight page fetches — balances throughput against MongoDB connection-pool + Vercel function limits
 const PARALLEL_CAP = 1000; // sanity cap so a misreported total can't blow up the browser
 async function list(path, query = {}) {
   const first = await request(path, { query: { limit: PAGE_SIZE, skip: 0, ...query } });
@@ -78,13 +79,28 @@ async function list(path, query = {}) {
   const total = Number.isFinite(first.total) && first.total > items.length ? first.total : null;
 
   if (total !== null) {
-    const pages = [];
-    for (let skip = PAGE_SIZE; skip < total && pages.length < PARALLEL_CAP; skip += PAGE_SIZE) {
-      pages.push(request(path, { query: { limit: PAGE_SIZE, skip, ...query } }));
+    // Build the remaining skips, then drain them through a bounded worker
+    // pool. Firing all ~70 pages at once (first attempt) overwhelmed the
+    // backend — MongoDB connection pool + Vercel function memory couldn't
+    // absorb the burst and the server returned 500s. Concurrency of 6
+    // keeps most of the parallel speedup while staying within limits.
+    const skips = [];
+    for (let skip = PAGE_SIZE; skip < total && skips.length < PARALLEL_CAP; skip += PAGE_SIZE) {
+      skips.push(skip);
     }
-    const rest = await Promise.all(pages);
-    for (const d of rest) {
-      const batch = Array.isArray(d.items) ? d.items : [];
+    const results = new Array(skips.length);
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(PARALLEL_LIMIT, skips.length) }, async () => {
+      while (true) {
+        const idx = cursor;
+        cursor += 1;
+        if (idx >= skips.length) return;
+        results[idx] = await request(path, { query: { limit: PAGE_SIZE, skip: skips[idx], ...query } });
+      }
+    });
+    await Promise.all(workers);
+    for (const d of results) {
+      const batch = Array.isArray(d?.items) ? d.items : [];
       items.push(...batch);
     }
     return items;
