@@ -754,7 +754,10 @@ BC_VIEW.labels = () => {
 };
 
 BC_VIEW.pieces = () => listView('pieces', {
-  rows: pieces, noun: 'piece', placeholder: 'Piece code, product or order', minWidth: 1100, open: 'piece', pageSize: 15,
+  // Only pieces whose labels have already been printed belong here —
+  // freshly-received, un-labelled pieces live under the "Labels to print"
+  // tab on the Labels view until the barcode goes on the fabric.
+  rows: pieces.filter((u) => u.printed), noun: 'piece', placeholder: 'Piece code, product or order', minWidth: 1100, open: 'piece', pageSize: 15,
   text: (u) => `${u.code || u.id} ${PROD[u.pid]?.name || ''} ${u.oid || ''}`,
   tabs: ['In stock', 'Reserved', 'Packed', 'Shipped', 'Returned', 'Written off'].map((s) => ({
     id: s, label: s === 'Shipped' ? 'Sold and shipped' : s, filter: (u) => u.status === s, hot: s === 'Returned',
