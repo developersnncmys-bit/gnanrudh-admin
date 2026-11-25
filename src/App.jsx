@@ -175,7 +175,7 @@ function App() {
       }
       const act = e.target.closest('[data-act]');
       const A = actionsRef.current;
-      if (act && A && A[act.dataset.act] && !(act.tagName === 'INPUT' && act.type === 'checkbox' && CHECK_ACTS.includes(act.dataset.act))) {
+      if (act && A && A[act.dataset.act] && !(act.tagName === 'INPUT' && act.type === 'checkbox' && CHECK_ACTS.includes(act.dataset.act)) && act.tagName !== 'SELECT') {
         if (act.tagName === 'A') e.preventDefault();
         // Global required-field guard. Any save/publish action that lives
         // inside an open drawer must first satisfy every [required] input
@@ -230,6 +230,13 @@ function App() {
       if (el.dataset.lvSel) { const s = LV[el.dataset.lv].sel; el.checked ? s.add(el.dataset.lvSel) : s.delete(el.dataset.lvSel); return renderPage(); }
       if (el.hasAttribute('data-lv-all')) { const id = el.dataset.lv; const rows = [...document.querySelectorAll(`[data-lv="${id}"][data-lv-sel]`)].map((x) => x.dataset.lvSel); rows.forEach((r) => (el.checked ? LV[id].sel.add(r) : LV[id].sel.delete(r))); return renderPage(); }
       if (CHECK_ACTS.includes(el.dataset.act) && A) A[el.dataset.act](el);
+      // Native <select data-act="…"> dispatches its action on change so
+      // dropdowns (e.g. the Labels batch size / copies pickers) can go
+      // through the same action table as buttons without needing a
+      // custom per-widget onChange handler.
+      if (el.tagName === 'SELECT' && el.dataset.act && A && A[el.dataset.act]) {
+        return A[el.dataset.act](el, e);
+      }
 
       // Product form live-reactive inputs
       if (el.id === 'pf-cat') {

@@ -19,6 +19,8 @@ import {
 import { openDoc, docInvoice, docLabel, labelHTML, docPackSlip } from './docs.js';
 import {
   setDashRange, setSetTab, getSetTab, setBcTab, setLabelFmt, getLabelFmt, LABEL_FMT,
+  getLabelBatchSize, setLabelBatchSize, getLabelBatchIndex, setLabelBatchIndex,
+  getLabelCopies, setLabelCopies, labelQueueFor,
   getPack, setPackFb, packStartScan, packCancelLocal, recordShipped, packDone, scanStats,
 } from './pages.js';
 import { bySku, findOrder, findPiece, beep } from './scanner.js';
@@ -1411,6 +1413,262 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     bcTab: (el) => { setBcTab(el.dataset.v); renderPage(); },
     labelFmt: (el) => { setLabelFmt(el.dataset.v); renderPage(); },
 
+    // Downloads a product-creation CSV template. Images are intentionally
+    // absent — admins add them later from each product's drawer, which is
+    // why bulk-created products default to Draft status.
+    bulkAddProductsTemplate: () => {
+      const sampleCat = categories[0]?.name || 'Mysore Silk';
+      downloadCSV('products-template.csv', [
+        ['name', 'category', 'selling_price', 'mrp', 'qty', 'weave', 'occasions', 'colour', 'hex', 'size', 'sku', 'status'],
+        ['Peacock blue Mysore silk', sampleCat, '12500', '15000', '10', 'Mysore Silk', 'Festive|Everyday', 'Peacock', '#1f5f7a', '', '', 'Draft'],
+        ['Ivory Banarasi with gold pallu', 'Banarasi', '28000', '32000', '5', 'Banarasi', 'Bridal', 'Ivory', '#f6f0e6', '', '', 'Draft'],
+        ['', '', '', '', '', '', '', '', '', '', '', ''],
+      ]);
+    },
+
+    // Opens the bulk-add-products dialog — CSV drop zone, parsed preview,
+    // and a submit that POSTs valid rows to /products/bulk.
+    // Resolves `category` case-insensitively against either the slug
+    // (_id) or the human name so admins can type whichever they remember.
+    bulkAddProductsOpen: () => {
+      let dlg = document.getElementById('bulkAddProductsDlg');
+      if (!dlg) {
+        dlg = document.createElement('dialog');
+        dlg.id = 'bulkAddProductsDlg';
+        dlg.innerHTML = `
+          <form method="dialog" class="dlg">
+            <h3 class="dlg-title">Bulk add products</h3>
+            <p class="small muted" style="margin:4px 0 14px">
+              Upload a CSV of new products. Each row creates one product with an initial colour variant; images are added later from the product's drawer, so rows save as <b>Draft</b> by default. Download the template for the exact columns.
+            </p>
+            <div id="bapDrop" class="br-drop" tabindex="0" role="button" aria-label="Drop CSV here or click to pick a file">
+              <div class="br-drop-ico">${icon('dl', 22)}</div>
+              <div><b>Drop the CSV here</b> or <span class="link">click to pick a file</span></div>
+              <div class="small muted" style="margin-top:6px">Only .csv files, UTF-8 encoded.</div>
+              <input type="file" id="bapFile" accept=".csv,text/csv" hidden>
+            </div>
+            <div id="bapSummary" class="small muted" style="margin:14px 0 6px" hidden></div>
+            <div id="bapPreview" style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md)" hidden></div>
+            <div class="dlg-foot">
+              <button type="button" class="btn btn-ghost" id="bapCancel">Cancel</button>
+              <button type="button" class="btn btn-pri" id="bapSubmit" disabled>Create products</button>
+            </div>
+          </form>
+        `;
+        // Minimal scoped styles for the drop-zone + preview table.
+        // Inlined so this feature is self-contained and doesn't fight the
+        // global stylesheet.
+        const style = document.createElement('style');
+        style.textContent = `
+          #bulkAddProductsDlg{border:none;border-radius:var(--r-lg);padding:0;max-width:760px;width:min(92vw,760px);background:#fff;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+          #bulkAddProductsDlg::backdrop{background:rgba(0,0,0,.35)}
+          #bulkAddProductsDlg .dlg{padding:22px 22px 18px}
+          #bulkAddProductsDlg .dlg-title{margin:0 0 4px;font-size:1.1rem}
+          #bulkAddProductsDlg .dlg-foot{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+          #bulkAddProductsDlg .br-drop{border:2px dashed var(--line);border-radius:var(--r-md);padding:28px 20px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+          #bulkAddProductsDlg .br-drop.is-over{border-color:var(--pri);background:rgba(10,90,60,.04)}
+          #bulkAddProductsDlg .br-drop:focus{outline:2px solid var(--pri);outline-offset:2px}
+          #bulkAddProductsDlg .br-drop-ico{display:flex;justify-content:center;margin-bottom:6px;color:var(--muted)}
+          #bulkAddProductsDlg table.br{width:100%;border-collapse:collapse;font-size:0.82rem}
+          #bulkAddProductsDlg table.br th,#bulkAddProductsDlg table.br td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}
+          #bulkAddProductsDlg table.br th{position:sticky;top:0;background:#fafafa;font-weight:600}
+          #bulkAddProductsDlg tr.row-bad{background:#fff6f6}
+          #bulkAddProductsDlg tr.row-bad td:last-child{color:#b00020}
+        `;
+        document.body.appendChild(style);
+        document.body.appendChild(dlg);
+      }
+
+      let parsed = [];
+      const summary = dlg.querySelector('#bapSummary');
+      const preview = dlg.querySelector('#bapPreview');
+      const submitBtn = dlg.querySelector('#bapSubmit');
+      const dropZone = dlg.querySelector('#bapDrop');
+      const fileInput = dlg.querySelector('#bapFile');
+
+      const byCat = new Map();
+      for (const c of categories) {
+        byCat.set(String(c.id).toLowerCase(), c);
+        if (c.name) byCat.set(String(c.name).toLowerCase(), c);
+      }
+
+      const parseCsv = (text) => {
+        const clean = text.replace(/^﻿/, '');
+        const rows = []; let cur = ''; let row = []; let inQ = false;
+        for (let i = 0; i < clean.length; i += 1) {
+          const c = clean[i];
+          if (inQ) {
+            if (c === '"' && clean[i + 1] === '"') { cur += '"'; i += 1; }
+            else if (c === '"') inQ = false;
+            else cur += c;
+          } else if (c === '"') inQ = true;
+          else if (c === ',') { row.push(cur); cur = ''; }
+          else if (c === '\n' || c === '\r') {
+            if (cur.length || row.length) { row.push(cur); rows.push(row); row = []; cur = ''; }
+            if (c === '\r' && clean[i + 1] === '\n') i += 1;
+          } else cur += c;
+        }
+        if (cur.length || row.length) { row.push(cur); rows.push(row); }
+        return rows
+          .map((r) => r.map((cell) => String(cell || '').trim()))
+          .filter((r) => r.some((cell) => cell.length) && !(r[0] || '').startsWith('#'));
+      };
+
+      const renderPreview = () => {
+        if (!parsed.length) {
+          summary.hidden = true; preview.hidden = true; submitBtn.disabled = true;
+          return;
+        }
+        const ok = parsed.filter((r) => r.ok).length;
+        const bad = parsed.length - ok;
+        const totalPieces = parsed.filter((r) => r.ok).reduce((a, r) => a + (r.qty || 0), 0);
+        summary.hidden = false;
+        summary.innerHTML = `<b>${parsed.length}</b> rows parsed — <b class="${ok ? 't-ok' : 'faint'}">${ok} ready</b>${totalPieces ? ` (${totalPieces} pieces)` : ''}, ${bad ? `<b class="t-warn">${bad} with errors</b>` : 'no errors'}. Added products will save as Draft until you upload an image.`;
+        preview.hidden = false;
+        preview.innerHTML = `
+          <table class="br">
+            <thead><tr><th>Line</th><th>Name</th><th>Category</th><th>Selling price</th><th>MRP</th><th>Qty</th><th>Colour</th><th>Status</th></tr></thead>
+            <tbody>
+              ${parsed.map((r) => `
+                <tr class="${r.ok ? '' : 'row-bad'}">
+                  <td>${r.line}</td>
+                  <td>${esc(r.name || '—')}</td>
+                  <td>${r.ok ? esc(r.catName) : esc(r.category || '—')}</td>
+                  <td>${r.ok ? inr(r.selling_price) : (r.selling_price || '—')}</td>
+                  <td>${r.ok && r.mrp ? inr(r.mrp) : '<span class="faint">—</span>'}</td>
+                  <td>${r.ok ? (r.qty || '<span class="faint">0</span>') : '—'}</td>
+                  <td>${esc(r.colour || '—')}</td>
+                  <td>${r.ok ? `<span class="t-ok">Ready</span>` : esc(r.error)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+        submitBtn.disabled = ok === 0;
+      };
+
+      const handleFile = (file) => {
+        if (!file) return;
+        if (!/\.csv$/i.test(file.name) && file.type !== 'text/csv') {
+          toast('Only .csv files are accepted.');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const rows = parseCsv(String(reader.result || ''));
+          if (!rows.length) { parsed = []; renderPreview(); return; }
+          const header = rows[0].map((h) => h.toLowerCase());
+          // Required: name, category, selling_price (or legacy `price`),
+          // colour, occasions.
+          const hasPrice = header.indexOf('selling_price') >= 0 || header.indexOf('price') >= 0;
+          const need = ['name', 'category', 'colour', 'occasions'];
+          const missingCols = need.filter((k) => header.indexOf(k) < 0);
+          if (!hasPrice) missingCols.push('selling_price');
+          if (missingCols.length) {
+            parsed = []; renderPreview();
+            toast(`CSV is missing required columns: ${missingCols.join(', ')}. Download the template for the exact headers.`);
+            return;
+          }
+          const col = (name) => header.indexOf(name);
+          parsed = rows.slice(1).map((r, i) => {
+            const line = i + 2;
+            const name = r[col('name')] || '';
+            const category = r[col('category')] || '';
+            // Accept `selling_price` (preferred) or legacy `price`.
+            const priceCol = col('selling_price') >= 0 ? col('selling_price') : col('price');
+            const priceRaw = r[priceCol] || '';
+            const selling_price = Number(priceRaw);
+            // MRP is optional; blank → null.
+            const mrpCol = col('mrp') >= 0 ? col('mrp') : col('compareat');
+            const mrpRaw = mrpCol >= 0 ? (r[mrpCol] || '') : '';
+            const mrp = mrpRaw === '' ? null : Number(mrpRaw);
+            // Initial stock to receive; blank or non-numeric → 0.
+            const qtyRaw = col('qty') >= 0 ? (r[col('qty')] || '') : '';
+            const qty = Math.max(0, parseInt(qtyRaw, 10) || 0);
+            const colour = r[col('colour')] || '';
+            const occasions = (r[col('occasions')] || '').split('|').map((s) => s.trim()).filter(Boolean);
+            const weave = col('weave') >= 0 ? r[col('weave')] : '';
+            const hex = col('hex') >= 0 ? (r[col('hex')] || '') : '';
+            const size = col('size') >= 0 ? (r[col('size')] || '') : '';
+            const sku = col('sku') >= 0 ? (r[col('sku')] || '') : '';
+            const statusRaw = col('status') >= 0 ? (r[col('status')] || '') : '';
+            const status = ['Draft', 'Active', 'Hidden'].includes(statusRaw) ? statusRaw : 'Draft';
+            if (!name) return { line, name, category, colour, ok: false, error: 'name is empty' };
+            if (!category) return { line, name, category, colour, ok: false, error: 'category is empty' };
+            if (!Number.isFinite(selling_price) || selling_price <= 0) return { line, name, category, selling_price: priceRaw, colour, ok: false, error: 'selling_price must be a positive number' };
+            if (mrp !== null && (!Number.isFinite(mrp) || mrp <= selling_price)) return { line, name, category, selling_price, mrp: mrpRaw, colour, ok: false, error: 'mrp must be greater than selling_price' };
+            if (!colour) return { line, name, category, selling_price, colour, ok: false, error: 'colour is empty' };
+            if (!occasions.length) return { line, name, category, selling_price, colour, ok: false, error: 'occasions required (pipe-separated)' };
+            const cat = byCat.get(category.toLowerCase());
+            if (!cat) return { line, name, category, selling_price, colour, ok: false, error: `unknown category: ${category}` };
+            return {
+              line, name, category, selling_price, mrp, qty, colour, occasions, weave, hex, size, sku, status,
+              catName: cat.name, ok: true,
+            };
+          });
+          renderPreview();
+        };
+        reader.onerror = () => toast('Could not read that file.');
+        reader.readAsText(file);
+      };
+
+      if (!dlg.dataset.bound) {
+        dlg.dataset.bound = '1';
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+        fileInput.addEventListener('change', () => handleFile(fileInput.files && fileInput.files[0]));
+        ['dragenter', 'dragover'].forEach((t) => dropZone.addEventListener(t, (e) => { e.preventDefault(); dropZone.classList.add('is-over'); }));
+        ['dragleave', 'drop'].forEach((t) => dropZone.addEventListener(t, (e) => { e.preventDefault(); dropZone.classList.remove('is-over'); }));
+        dropZone.addEventListener('drop', (e) => {
+          const file = e.dataTransfer?.files?.[0];
+          if (file) { fileInput.files = e.dataTransfer.files; handleFile(file); }
+        });
+        dlg.querySelector('#bapCancel').addEventListener('click', () => dlg.close());
+        dlg.querySelector('#bapSubmit').addEventListener('click', async () => {
+          const payload = parsed.filter((r) => r.ok).map((r) => ({
+            name: r.name,
+            category: r.category,
+            selling_price: r.selling_price,
+            mrp: r.mrp,
+            qty: r.qty,
+            weave: r.weave,
+            occasions: r.occasions.join('|'),
+            colour: r.colour,
+            hex: r.hex,
+            size: r.size,
+            sku: r.sku,
+            status: r.status,
+          }));
+          if (!payload.length) return;
+          submitBtn.disabled = true;
+          try {
+            const res = await api.products.bulkCreate(payload);
+            const t = res?.totals || { ok: 0, failed: 0, pieces: 0 };
+            const pieceNote = t.pieces ? `, ${t.pieces} ${t.pieces === 1 ? 'piece' : 'pieces'} received` : '';
+            // Surface the first failure reason inline so the admin can
+            // act on it without hunting through server logs.
+            const firstFail = (res?.results || []).find((r) => !r.ok);
+            const skipNote = t.failed
+              ? `; ${t.failed} skipped${firstFail?.error ? ` (first: ${firstFail.error})` : ''}`
+              : '';
+            toast(`${t.ok} ${t.ok === 1 ? 'product' : 'products'} created${pieceNote}${skipNote}. Open each one to upload images.`);
+            await refresh('products');
+            if (t.pieces) await refresh('pieces');
+            renderPage(); renderNav();
+            dlg.close();
+          } catch (err) {
+            submitBtn.disabled = false;
+            toast(`Bulk add failed: ${err.message}`);
+          }
+        });
+      }
+
+      parsed = [];
+      fileInput.value = '';
+      renderPreview();
+      dlg.showModal();
+    },
+
     stockIn: async (el) => {
       const vid = el.dataset.id;
       const ref = varRef(vid);
@@ -1440,8 +1698,10 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     printUnprinted: () => {
       const list = pieces.filter((u) => !u.printed && ['In stock', 'Reserved', 'Returned'].includes(u.status));
       if (!list.length) return toast('Every piece on the shelf already has a label.');
+      const copies = getLabelCopies();
+      const doubled = copies > 1 ? Array.from({ length: copies }).flatMap(() => list) : list;
       const fmt = getLabelFmt();
-      openDoc(`${plural(list.length, 'label')}, ${LABEL_FMT[fmt][0].toLowerCase()}`, `<style>${LABEL_FMT[fmt][1]}</style><div class="plabels ${fmt}">${list.map(labelHTML).join('')}</div>`);
+      openDoc(`${plural(doubled.length, 'label')}, ${LABEL_FMT[fmt][0].toLowerCase()}`, `<style>${LABEL_FMT[fmt][1]}</style><div class="plabels ${fmt}">${doubled.map(labelHTML).join('')}</div>`);
       const codes = list.map((u) => u.code || u.id);
       sync(api.pieces.bulkPrinted(codes).then(() => refresh('pieces').then(renderPage)), 'mark labels printed');
     },
@@ -1451,11 +1711,61 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       if (!vids.length) return toast('Select at least one colour.');
       const list = pieces.filter((u) => vids.includes(u.vid) && u.status === 'In stock');
       if (!list.length) return toast('No pieces in stock for the selected colours.');
+      const copies = getLabelCopies();
+      const doubled = copies > 1 ? Array.from({ length: copies }).flatMap(() => list) : list;
       const fmt = getLabelFmt();
-      openDoc(`${plural(list.length, 'label')}, ${LABEL_FMT[fmt][0].toLowerCase()}`, `<style>${LABEL_FMT[fmt][1]}</style><div class="plabels ${fmt}">${list.map(labelHTML).join('')}</div>`);
+      openDoc(`${plural(doubled.length, 'label')}, ${LABEL_FMT[fmt][0].toLowerCase()}`, `<style>${LABEL_FMT[fmt][1]}</style><div class="plabels ${fmt}">${doubled.map(labelHTML).join('')}</div>`);
       LV.labels?.sel.clear();
       const codes = list.map((u) => u.code || u.id);
       sync(api.pieces.bulkPrinted(codes).then(() => refresh('pieces').then(renderPage)), 'mark labels printed');
+    },
+
+    // Batched print — hands the operator exactly `labelBatchSize` labels at
+    // a time, marks that slice's pieces printed, and advances the batch
+    // index so the next click prints the next chunk. All state lives in
+    // localStorage (see pages.js) so the UI remembers its place across
+    // refreshes and tab switches.
+    printBatch: () => {
+      const sel = LV.labels?.sel;
+      const scope = sel?.size ? sel : null;
+      const queue = labelQueueFor(scope);
+      if (!queue.length) return toast('Nothing left to print. Receive stock first, or clear the colour selection.');
+      const size = getLabelBatchSize();
+      const batchCount = Math.ceil(queue.length / size);
+      let idx = getLabelBatchIndex();
+      if (idx > batchCount - 1) idx = 0;
+      const slice = queue.slice(idx * size, idx * size + size);
+      if (!slice.length) return toast('Nothing left to print in this batch.');
+      const fmt = getLabelFmt();
+      openDoc(
+        `Batch ${idx + 1} of ${batchCount} · ${plural(slice.length, 'label')}, ${LABEL_FMT[fmt][0].toLowerCase()}`,
+        `<style>${LABEL_FMT[fmt][1]}</style><div class="plabels ${fmt}">${slice.map(labelHTML).join('')}</div>`,
+      );
+      // Mark each piece printed once (even when copies > 1 and the piece
+      // appears multiple times in the slice).
+      const uniqueCodes = [...new Set(slice.map((u) => u.code || u.id))];
+      sync(api.pieces.bulkPrinted(uniqueCodes).then(() => refresh('pieces').then(renderPage)), 'mark labels printed');
+      // Advance to the next batch. When the last batch just printed, loop
+      // back to 0 — the queue is about to shrink anyway once the pieces
+      // mark printed, so the next render will reconcile.
+      setLabelBatchIndex(idx + 1 < batchCount ? idx + 1 : 0);
+      renderPage();
+    },
+
+    labelCopies: (el) => { setLabelCopies(el.value); renderPage(); },
+    labelBatchSize: (el) => { setLabelBatchSize(el.value); renderPage(); },
+    labelBatchPrev: () => {
+      const idx = getLabelBatchIndex();
+      if (idx > 0) { setLabelBatchIndex(idx - 1); renderPage(); }
+    },
+    labelBatchNext: () => {
+      const sel = LV.labels?.sel;
+      const scope = sel?.size ? sel : null;
+      const queue = labelQueueFor(scope);
+      const size = getLabelBatchSize();
+      const batchCount = Math.max(1, Math.ceil(queue.length / size));
+      const idx = getLabelBatchIndex();
+      if (idx + 1 < batchCount) { setLabelBatchIndex(idx + 1); renderPage(); }
     },
 
     printPiece: (el) => {

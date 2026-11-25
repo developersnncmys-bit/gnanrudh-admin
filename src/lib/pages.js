@@ -197,7 +197,11 @@ PAGES.shipping = () => `<div class="page-head"><div><h1 class="h1">Shipping</h1>
 
 /* =============== PRODUCTS =============== */
 PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1><p class="lede">Each product carries its weave, zari, border and blouse piece as fields that drive the store’s filters. Stock is held per colour variant.</p></div>
-    <button type="button" class="btn btn-pri" data-act="newProduct">${icon('plus')}Add product</button></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button type="button" class="btn btn-sec" data-act="bulkAddProductsTemplate">${icon('dl')}Download template</button>
+      <button type="button" class="btn btn-sec" data-act="bulkAddProductsOpen">${icon('plus')}Bulk add products</button>
+      <button type="button" class="btn btn-pri" data-act="newProduct">${icon('plus')}Add product</button>
+    </div></div>
   ${listView('products', {
     rows: products, noun: 'product', placeholder: 'Name, weave or SKU', minWidth: 1180, open: 'product',
     text: (p) => `${p.name} ${p.weave} ${p.variants.map((v) => `${v.sku} ${v.colour}`).join(' ')}`,
@@ -702,6 +706,80 @@ export const LABEL_FMT = {
   thermal: ['Thermal roll, 75 × 50 mm', '@page { size: 75mm 50mm; margin: 0; }'],
   a4:      ['A4 sheet, 14 per page (99 × 38 mm)', '@page { size: A4; margin: 15.1mm 4.65mm 0; }'],
 };
+
+// Batched label printing. Picking "batch size: 500" and "copies: 2" lets
+// the operator print 500 labels at a time instead of trying to shove 2,000
+// into one print dialog (which hangs browsers and jams thermal rolls).
+// State persists to localStorage so the operator can print batch 1, walk
+// to the printer, come back and find the UI on batch 2.
+export const LABEL_BATCH_SIZES = [100, 250, 500, 1000];
+export const LABEL_COPIES = [1, 2, 3];
+const LS_LABEL_BATCH_SIZE = 'hog_label_batch_size';
+const LS_LABEL_BATCH_INDEX = 'hog_label_batch_index';
+const LS_LABEL_COPIES = 'hog_label_copies';
+const readLS = (k, fallback) => {
+  try {
+    const raw = localStorage.getItem(k);
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  } catch { return fallback; }
+};
+const writeLS = (k, v) => { try { localStorage.setItem(k, String(v)); } catch { /* ignore quota / private mode */ } };
+let labelBatchSize = readLS(LS_LABEL_BATCH_SIZE, 500);
+let labelBatchIndex = readLS(LS_LABEL_BATCH_INDEX, 0);
+let labelCopies = readLS(LS_LABEL_COPIES, 1);
+if (!LABEL_BATCH_SIZES.includes(labelBatchSize)) labelBatchSize = 500;
+if (!LABEL_COPIES.includes(labelCopies)) labelCopies = 1;
+export const getLabelBatchSize = () => labelBatchSize;
+export const setLabelBatchSize = (v) => {
+  const n = Number(v);
+  if (!LABEL_BATCH_SIZES.includes(n)) return;
+  labelBatchSize = n;
+  labelBatchIndex = 0; // size change invalidates the current index
+  writeLS(LS_LABEL_BATCH_SIZE, labelBatchSize);
+  writeLS(LS_LABEL_BATCH_INDEX, labelBatchIndex);
+};
+export const getLabelCopies = () => labelCopies;
+export const setLabelCopies = (v) => {
+  const n = Number(v);
+  if (!LABEL_COPIES.includes(n)) return;
+  labelCopies = n;
+  labelBatchIndex = 0;
+  writeLS(LS_LABEL_COPIES, labelCopies);
+  writeLS(LS_LABEL_BATCH_INDEX, labelBatchIndex);
+};
+export const getLabelBatchIndex = () => labelBatchIndex;
+export const setLabelBatchIndex = (v) => {
+  const n = Math.max(0, Number(v) || 0);
+  labelBatchIndex = n;
+  writeLS(LS_LABEL_BATCH_INDEX, labelBatchIndex);
+};
+
+// Flatten the "work remaining" into an ordered array of pieces, repeated by
+// the copies-per-piece setting. Scoped to the ticked variants when the
+// Labels list has selections, otherwise every unprinted in-stock / returned
+// piece across the catalogue. This is the single source of truth both the
+// counter and the batch slicer read from, so they can never disagree.
+export function labelQueueFor(variantIds /* Set | null */) {
+  const eligible = pieces.filter((u) =>
+    !u.printed
+    && ['In stock', 'Returned'].includes(u.status)
+    && (!variantIds || variantIds.has(u.vid)),
+  );
+  // Sort by product + colour + received so a batch stays grouped — much
+  // easier to peel and stick labels when they're in rack order.
+  eligible.sort((a, b) => {
+    const pa = PROD[a.pid]?.name || '';
+    const pb = PROD[b.pid]?.name || '';
+    if (pa !== pb) return pa.localeCompare(pb);
+    if (a.vid !== b.vid) return String(a.vid).localeCompare(String(b.vid));
+    return String(a.received || '').localeCompare(String(b.received || ''));
+  });
+  if (labelCopies <= 1) return eligible;
+  const out = [];
+  for (const u of eligible) for (let i = 0; i < labelCopies; i += 1) out.push(u);
+  return out;
+}
 const BC_TABS = [['labels', 'Labels'], ['pieces', 'Pieces'], ['moves', 'Stock movements'], ['setup', 'Printer and scanner setup']];
 
 const varRows = () => products.flatMap((p) => p.variants.filter((v) => v.sku).map((v) => {
@@ -723,13 +801,69 @@ const varRows = () => products.flatMap((p) => p.variants.filter((v) => v.sku).ma
 
 const BC_VIEW = {};
 BC_VIEW.labels = () => {
-  const rows = varRows();
+  // Newest products on top by default (matches Inventory + Products
+  // pages). Composite key: product `created` desc, then P-id suffix
+  // desc so same-day products stay deterministic; variants inside the
+  // same product keep their natural order via the sort's stable
+  // fallback.
+  const rows = varRows().sort((a, b) => {
+    const dc = String(b.p.created || '').localeCompare(String(a.p.created || ''));
+    if (dc !== 0) return dc;
+    const an = parseInt(String(a.p.id || '').replace(/^P/, ''), 10) || 0;
+    const bn = parseInt(String(b.p.id || '').replace(/^P/, ''), 10) || 0;
+    return bn - an;
+  });
   const sel = LV.labels?.sel;
-  const active = sel?.size ? rows.filter((r) => sel.has(r.id)) : rows;
-  const unprinted = active.reduce((a, r) => a + r.unprinted, 0);
-  const printAct = sel?.size ? 'printSelected' : 'printUnprinted';
-  return `<div class="page-head" style="margin-bottom:12px"><div class="seg" role="group" aria-label="Label format">${Object.entries(LABEL_FMT).map(([k, [l]]) => `<button type="button" data-act="labelFmt" data-v="${k}" aria-pressed="${labelFmt === k}">${esc(l)}</button>`).join('')}</div>
-    <button type="button" class="btn btn-pri" data-act="${printAct}" ${unprinted ? '' : 'disabled'}>${icon('barcode')}Print ${plural(unprinted, 'new label')}</button></div>
+  // Build the queue the batch button will actually print. `labelQueueFor`
+  // honours the row selection and multiplies by copies-per-piece, so the
+  // counter below reflects the real print volume (not just "unique pieces").
+  const scope = sel?.size ? sel : null;
+  const queue = labelQueueFor(scope);
+  const totalLabels = queue.length;
+  const batchSize = getLabelBatchSize();
+  const copies = getLabelCopies();
+  const batchCount = totalLabels === 0 ? 0 : Math.ceil(totalLabels / batchSize);
+  // Clamp index into range — localStorage may hold a stale index from
+  // yesterday that's now past the end of today's shorter queue.
+  let batchIdx = getLabelBatchIndex();
+  if (batchIdx > Math.max(0, batchCount - 1)) {
+    batchIdx = 0;
+    setLabelBatchIndex(0);
+  }
+  const sliceStart = batchIdx * batchSize;
+  const sliceEnd = Math.min(sliceStart + batchSize, totalLabels);
+  const inThisBatch = Math.max(0, sliceEnd - sliceStart);
+  const hasAnything = totalLabels > 0;
+  const scopeLabel = scope ? ` (${plural(sel.size, 'colour')} selected)` : '';
+  // Dropdown helpers kept inline so the whole header stays in one HTML
+  // template. Each option carries a tiny "label text" transform — Copies
+  // reads as "×1 per piece", batch size as "500 per batch", etc.
+  const copiesOptions = LABEL_COPIES
+    .map((n) => `<option value="${n}"${n === copies ? ' selected' : ''}>×${n} per piece</option>`)
+    .join('');
+  const batchSizeOptions = LABEL_BATCH_SIZES
+    .map((n) => `<option value="${n}"${n === batchSize ? ' selected' : ''}>${nf.format(n)} per batch</option>`)
+    .join('');
+  return `<div class="page-head" style="margin-bottom:12px;flex-wrap:wrap;gap:12px">
+    <div class="seg" role="group" aria-label="Label format">${Object.entries(LABEL_FMT).map(([k, [l]]) => `<button type="button" data-act="labelFmt" data-v="${k}" aria-pressed="${labelFmt === k}">${esc(l)}</button>`).join('')}</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label class="small muted" for="label-copies">Copies</label>
+      <select id="label-copies" class="ctl" style="width:auto" data-act="labelCopies">${copiesOptions}</select>
+      <label class="small muted" for="label-batch-size">Batch</label>
+      <select id="label-batch-size" class="ctl" style="width:auto" data-act="labelBatchSize">${batchSizeOptions}</select>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button type="button" class="btn btn-sec btn-sm" data-act="labelBatchPrev" ${batchIdx === 0 || !hasAnything ? 'disabled' : ''} aria-label="Previous batch">‹</button>
+      <span class="small" style="min-width:140px;text-align:center">Batch ${hasAnything ? batchIdx + 1 : 0} of ${batchCount}</span>
+      <button type="button" class="btn btn-sec btn-sm" data-act="labelBatchNext" ${batchIdx >= batchCount - 1 || !hasAnything ? 'disabled' : ''} aria-label="Next batch">›</button>
+    </div>
+    <button type="button" class="btn btn-pri" data-act="printBatch" ${hasAnything ? '' : 'disabled'}>${icon('barcode')}Print this batch</button>
+  </div>
+  <p class="small muted" style="margin:-4px 0 12px">
+    ${hasAnything
+      ? `${plural(inThisBatch, 'label')} in this batch${scopeLabel} · ${nf.format(totalLabels)} total unprinted ${copies > 1 ? `(×${copies} copies)` : ''}`
+      : `Nothing waiting to be labelled${scopeLabel}. Receive stock to queue new labels.`}
+  </p>
     ${listView('labels', {
       rows, noun: 'colour', placeholder: 'Product, colour or SKU', minWidth: 1100,
       text: (r) => `${r.p.name} ${r.v.colour} ${r.v.sku}`,
@@ -739,7 +873,9 @@ BC_VIEW.labels = () => {
       ],
       filters: [{ id: 'cat', label: 'All categories', options: categories.map((c) => [c.id, c.name]), test: (r, v) => r.p.cat === v }],
       bulk: [['printSelected', 'Print labels for pieces in stock']],
-      sort: { key: 'unprinted', dir: 'desc' },
+      // Default = pre-sorted order (newest products first). Clicking a
+      // column header still re-sorts as expected.
+      sort: null,
       columns: [
         { key: 'name', label: 'Product', sort: (r) => r.p.name, render: (r) => prodCell(r.p) },
         { key: 'colour', label: 'Colour', sort: (r) => r.v.colour, render: (r) => `<span style="display:inline-flex;align-items:center;gap:10px">${swv(r.v, r.p)}${esc(r.v.colour)}${r.v.size ? `, ${r.v.size}` : ''}</span>` },
@@ -889,7 +1025,18 @@ const inventoryRows = () => products.flatMap((p) => p.variants.map((v) => {
 }));
 
 PAGES.inventory = () => {
-  const rows = inventoryRows();
+  // Sort by product added-date (newest first). Composite key breaks
+  // ties for variants that share a product so order within a product
+  // stays stable (first variant on top). Ties on created fall back to
+  // the P-id suffix so same-day creates still have a deterministic
+  // winner — matches the Products page sort.
+  const rows = inventoryRows().sort((a, b) => {
+    const dc = String(b.p.created || '').localeCompare(String(a.p.created || ''));
+    if (dc !== 0) return dc;
+    const an = parseInt(String(a.p.id || '').replace(/^P/, ''), 10) || 0;
+    const bn = parseInt(String(b.p.id || '').replace(/^P/, ''), 10) || 0;
+    return bn - an;
+  });
   const totalValue = rows.reduce((a, r) => a + r.value, 0);
   const totalUnits = rows.reduce((a, r) => a + r.inStock, 0);
   const lowCount = rows.filter((r) => r.health === 'low').length;
@@ -914,7 +1061,11 @@ PAGES.inventory = () => {
         { id: 'cat', label: 'All categories', options: categories.map((c) => [c.id, c.name]), test: (r, v) => r.p.cat === v },
         { id: 'status', label: 'All product statuses', options: [['Active', 'Live'], 'Draft', 'Hidden'], test: (r, v) => r.p.status === v },
       ],
-      sort: { key: 'inStock', dir: 'asc' },
+      // Default = whatever order the rows are passed in (newest first,
+      // see the pre-sort above). Admins can still click any column
+      // header to override; a `null` default only drops the initial
+      // forced sort.
+      sort: null,
       columns: [
         { key: 'name', label: 'Product', sort: (r) => r.p.name, render: (r) => prodCell(r.p, '', r.v) },
         { key: 'colour', label: 'Colour and SKU', sort: (r) => r.v.colour, render: (r) => `<span style="display:inline-flex;align-items:center;gap:10px">${swv(r.v, r.p)}<span>${esc(r.v.colour)}${r.v.size ? `, ${r.v.size}` : ''}<span class="sub">${esc(r.v.sku || 'No SKU yet')}</span></span></span>` },

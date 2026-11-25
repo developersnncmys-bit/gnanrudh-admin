@@ -201,6 +201,7 @@ export const api = {
     replace: (id, doc) => put(`/products/${id}`, doc),
     remove: (id) => del(`/products/${id}`),
     bulkStatus: (ids, status) => patch('/products/bulk', { ids, status }),
+    bulkCreate: (rows) => post('/products/bulk', { rows }),
   },
   customers: {
     list: () => list('/customers'),
