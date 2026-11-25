@@ -228,7 +228,7 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
         const total = live.reduce((a, x) => a + x.n, 0);
         return `<span style="display:inline-flex;gap:4px">${live.map(({ v, n }) => `<span title="${esc(v.colour)}${v.size ? `, ${v.size}` : ''}: ${n} in stock" style="position:relative;display:inline-block">${swv(v, p)}</span>`).join('')}</span><span class="sub ${soldOut ? 't-warn' : ''}">${total} in stock${soldOut ? `, ${soldOut} sold out` : ''}</span>`;
       } },
-      { key: 'blouse', label: 'Blouse piece', render: (p) => (CAT[p.cat].saree ? (p.blousePiece ? 'Included<span class="sub">Stitching offered</span>' : '<span class="faint">Not included</span>') : '<span class="faint">—</span>') },
+      { key: 'blouse', label: 'Blouse piece', render: (p) => (CAT[p.cat]?.saree ? (p.blousePiece ? 'Included<span class="sub">Stitching offered</span>' : '<span class="faint">Not included</span>') : '<span class="faint">—</span>') },
       { key: 'price', label: 'Price', sort: true, align: 'r', render: (p) => `<span class="strong">${inr(p.price)}</span>${p.compareAt ? `<span class="sub"><s>${inr(p.compareAt)}</s></span>` : ''}` },
       { key: 'rating', label: 'Reviews', sort: (p) => Number(p.rating), render: (p) => (p.reviews ? `★ ${p.rating}<span class="sub">${plural(p.reviews, 'review')}</span>` : '<span class="faint">None yet</span>') },
       {
@@ -664,7 +664,7 @@ PAGES.productAnalytics = () => {
     </div>
     <div class="grid g2">
       <section class="panel"><div class="panel-head"><div><h2 class="h2">Most sold products</h2><p>By units shipped on paid orders.</p></div></div>
-        <div class="panel-body"><ul class="list">${topSold.length ? topSold.map((p) => `<li data-open="product:${p.id}">${sw(p, 'sm')}<span class="grow">${esc(p.name)}<span class="sub">${esc(CAT[p.cat].name)} · ${inrS(p.revenue)}</span></span><span class="strong">${plural(p.sold, 'unit')}</span></li>`).join('') : emptyList('No sales yet')}</ul></div></section>
+        <div class="panel-body"><ul class="list">${topSold.length ? topSold.map((p) => `<li data-open="product:${p.id}">${sw(p, 'sm')}<span class="grow">${esc(p.name)}<span class="sub">${esc(CAT[p.cat]?.name || 'Uncategorised')} · ${inrS(p.revenue)}</span></span><span class="strong">${plural(p.sold, 'unit')}</span></li>`).join('') : emptyList('No sales yet')}</ul></div></section>
       <section class="panel"><div class="panel-head"><div><h2 class="h2">Most visited categories</h2><p>Page views summed across each category’s products.</p></div></div>
         <div class="panel-body">${catRows.some((c) => c.views) ? hbars(catRows.map((c) => ({ label: c.name, value: c.views })), {}) : `<p class="empty"><strong>No category views tracked yet</strong></p>`}</div></section>
       <section class="panel"><div class="panel-head"><div><h2 class="h2">Top revenue earners</h2></div></div>

@@ -137,7 +137,7 @@ export function renderPalette(q) {
   const res = [];
   if (s) {
     orders.filter((o) => `${o.id} ${CUST[o.cid].name} ${CUST[o.cid].phone} ${o.ship.awb || ''} ${o.payment.rzp || ''}`.toLowerCase().includes(s)).slice(0, 5).forEach((o) => res.push(['Orders', `order:${o.id}`, `<span class="grow"><b>${o.id}</b><span class="sub">${esc(CUST[o.cid].name)}, ${inr(o.total)}</span></span>${pill(o.status, ORDER_TONE[o.status])}`]));
-    products.filter((p) => `${p.name} ${p.weave} ${p.variants.map((v) => v.sku).join(' ')}`.toLowerCase().includes(s)).slice(0, 5).forEach((p) => res.push(['Products', `product:${p.id}`, `${sw(p, 'sm')}<span class="grow"><b>${esc(p.name)}</b><span class="sub">${esc(CAT[p.cat].name)}, ${inr(p.price)}</span></span>`]));
+    products.filter((p) => `${p.name} ${p.weave} ${p.variants.map((v) => v.sku).join(' ')}`.toLowerCase().includes(s)).slice(0, 5).forEach((p) => res.push(['Products', `product:${p.id}`, `${sw(p, 'sm')}<span class="grow"><b>${esc(p.name)}</b><span class="sub">${esc(CAT[p.cat]?.name || 'Uncategorised')}, ${inr(p.price)}</span></span>`]));
     customers.filter((c) => `${c.name} ${c.phone} ${c.email} ${c.city}`.toLowerCase().includes(s)).slice(0, 5).forEach((c) => res.push(['Customers', `customer:${c.id}`, `<span class="avatar ${avc(c.name)}">${esc(initials(c.name))}</span><span class="grow"><b>${esc(c.name)}</b><span class="sub">${esc(c.city)}, ${c.orderCount} orders</span></span>${seg(c.segment)}`]));
   } else [['Go to', '/orders', '<span class="grow"><b>Open orders</b></span>'], ['Go to', '/returns', '<span class="grow"><b>Returns to review</b></span>'], ['Go to', '/insights', '<span class="grow"><b>Product insights</b></span>']].forEach((x) => res.push(x));
   palItems = res; palSel = 0;

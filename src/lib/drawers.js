@@ -713,7 +713,7 @@ export function pageDrawer(i) {
 export function featuredDrawer() {
   const picked = new Set(featured);
   const list = (q, cat) => products.filter((p) => p.status === 'Active' && (!cat || p.cat === cat) && (!q || p.name.toLowerCase().includes(q.toLowerCase()))).slice(0, 60);
-  const rows = (q = '', cat = '') => list(q, cat).map((p) => `<li><input type="checkbox" data-feat="${p.id}" ${picked.has(p.id) ? 'checked' : ''} aria-label="Feature ${esc(p.name)}">${sw(p, 'sm')}<span class="grow">${esc(p.name)}<span class="sub">${esc(CAT[p.cat].name)}, ${inr(p.price)}</span></span></li>`).join('') || '<li class="muted">No products match.</li>';
+  const rows = (q = '', cat = '') => list(q, cat).map((p) => `<li><input type="checkbox" data-feat="${p.id}" ${picked.has(p.id) ? 'checked' : ''} aria-label="Feature ${esc(p.name)}">${sw(p, 'sm')}<span class="grow">${esc(p.name)}<span class="sub">${esc(CAT[p.cat]?.name || 'Uncategorised')}, ${inr(p.price)}</span></span></li>`).join('') || '<li class="muted">No products match.</li>';
   openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">Featured weaves</h2><p class="small muted" style="margin:4px 0 0" id="feat-count">${picked.size} selected</p></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
     <div class="d-body"><div style="display:flex;gap:8px;margin-bottom:12px"><div class="search" style="flex:1">${icon('search')}<input class="ctl" id="feat-q" placeholder="Search live products" aria-label="Search live products"></div><select class="ctl" id="feat-cat" style="width:200px" aria-label="Category"><option value="">All categories</option>${categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
       <ul class="list" id="feat-list">${rows()}</ul></div>
@@ -738,7 +738,7 @@ export function insightDrawer(id) {
   const same = insList.filter((y) => PROD[y.id].cat === p.cat); const catTime = same.length ? sumBy(same, 'avgTime') / same.length : x.avgTime;
   const myCarts = abCarts.filter((a) => a.pids.includes(id)); const reach = myCarts.filter((a) => a.contactable && a.status === 'Not contacted');
   const funnelRows = (steps) => steps.map(([s, n], i) => `<div class="hbar"><span>${esc(s)}${i ? `<span class="sub">${(steps[i - 1][1] ? (n / steps[i - 1][1] * 100).toFixed(0) : 0)}% of the step before</span>` : ''}</span><div class="bar"><span style="width:${steps[0][1] ? (n / steps[0][1] * 100) : 0}%"></span></div><span class="strong">${nf.format(n)}</span></div>`).join('');
-  openDrawer(`${head(p.name, `<div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">${pill(x.verdict, tone)}<span class="small muted">${esc(CAT[p.cat].name)}, ${inr(p.price)}, last 30 days</span></div>`)}
+  openDrawer(`${head(p.name, `<div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">${pill(x.verdict, tone)}<span class="small muted">${esc(CAT[p.cat]?.name || 'Uncategorised')}, ${inr(p.price)}, last 30 days</span></div>`)}
     <div class="d-body">
       <div class="note n-info">${esc(advice)}</div>
       <div class="d-sec" style="margin-top:18px"><h3>From view to payment</h3>${funnelRows([['Viewed', x.views], ['Added to cart', x.carts], ['Started checkout', x.checkouts], ['Paid', x.units]])}
