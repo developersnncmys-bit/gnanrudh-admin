@@ -753,7 +753,27 @@ BC_VIEW.labels = () => {
     })}`;
 };
 
-BC_VIEW.pieces = () => listView('pieces', {
+BC_VIEW.pieces = () => {
+  // Distinct colour names in use across the pieces collection, driven by
+  // the variant each piece is attached to. Built fresh on every render so
+  // newly-received stock introduces its colour into the filter dropdown
+  // without needing a refresh. Case-insensitive de-dup so "Red" and "red"
+  // collapse into one option; sorted alphabetically for a scannable list.
+  const colourSet = new Map();
+  for (const u of pieces) {
+    if (!u.printed) continue;
+    const r = varRefLocal(u.vid);
+    const name = r?.v?.colour;
+    if (!name) continue;
+    const key = String(name).trim().toLowerCase();
+    if (!key) continue;
+    if (!colourSet.has(key)) colourSet.set(key, String(name).trim());
+  }
+  const colourOptions = [...colourSet.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([key, label]) => [key, label]);
+
+  return listView('pieces', {
   // Only pieces whose labels have already been printed belong here —
   // freshly-received, un-labelled pieces live under the "Labels to print"
   // tab on the Labels view until the barcode goes on the fabric.
@@ -762,7 +782,22 @@ BC_VIEW.pieces = () => listView('pieces', {
   tabs: ['In stock', 'Reserved', 'Packed', 'Shipped', 'Returned', 'Written off'].map((s) => ({
     id: s, label: s === 'Shipped' ? 'Sold and shipped' : s, filter: (u) => u.status === s, hot: s === 'Returned',
   })).concat([{ id: 'all', label: 'All', filter: null }]),
-  filters: [{ id: 'cat', label: 'All categories', options: categories.map((c) => [c.id, c.name]), test: (u, v) => PROD[u.pid]?.cat === v }],
+  filters: [
+    { id: 'cat', label: 'All categories', options: categories.map((c) => [c.id, c.name]), test: (u, v) => PROD[u.pid]?.cat === v },
+    {
+      id: 'colour',
+      label: 'All colours',
+      options: colourOptions,
+      // v is the lower-cased key stored in the dropdown value. Compare
+      // against the piece's variant colour the same way so mixed-case
+      // admin entries still match.
+      test: (u, v) => {
+        const r = varRefLocal(u.vid);
+        const name = r?.v?.colour;
+        return !!name && String(name).trim().toLowerCase() === v;
+      },
+    },
+  ],
   sort: { key: 'at', dir: 'desc' },
   columns: [
     { key: 'code', label: 'Piece', sort: true, render: (u) => `<b>${esc(u.code || u.id)}</b>${u.printed ? '' : '<span class="sub t-warn">Label not printed</span>'}` },
@@ -773,7 +808,8 @@ BC_VIEW.pieces = () => listView('pieces', {
     { key: 'at', label: 'Last moved', sort: true, render: (u) => esc(dtF.format(new Date(u.at))) },
     { key: 'received', label: 'Received', sort: true, render: (u) => esc(fmtD(u.received)) },
   ],
-});
+  });
+};
 
 BC_VIEW.moves = () => listView('moves', {
   // Stock movements grow unbounded over time (823 rows in this install,
