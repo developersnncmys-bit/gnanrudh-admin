@@ -208,6 +208,11 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
       { id: 'blouse', label: 'Blouse piece', options: [['y', 'Included'], ['n', 'Not included']], test: (p, v) => (v === 'y') === p.blousePiece },
     ],
     bulk: [['bulkStatus', 'Change status'], ['bulkFeature', 'Feature on homepage'], ['exportSelected', 'Export CSV']],
+    // Freshest first. `created` is YYYY-MM-DD (day precision), so two
+    // products added on the same day would tie and fall back to array
+    // order; tacking on the numeric suffix of the P-id breaks the tie
+    // deterministically (saveProduct allocates P${maxNum + 1}, so the
+    // product with the largest suffix is always the newest for that day).
     sort: { key: 'created', dir: 'desc' },
     columns: [
       { key: 'name', label: 'Product', sort: true, render: (p) => prodCell(p) },
@@ -226,7 +231,22 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
       { key: 'blouse', label: 'Blouse piece', render: (p) => (CAT[p.cat].saree ? (p.blousePiece ? 'Included<span class="sub">Stitching offered</span>' : '<span class="faint">Not included</span>') : '<span class="faint">—</span>') },
       { key: 'price', label: 'Price', sort: true, align: 'r', render: (p) => `<span class="strong">${inr(p.price)}</span>${p.compareAt ? `<span class="sub"><s>${inr(p.compareAt)}</s></span>` : ''}` },
       { key: 'rating', label: 'Reviews', sort: (p) => Number(p.rating), render: (p) => (p.reviews ? `★ ${p.rating}<span class="sub">${plural(p.reviews, 'review')}</span>` : '<span class="faint">None yet</span>') },
-      { key: 'created', label: 'Added', sort: true, render: (p) => esc(fmtD(p.created)) },
+      {
+        key: 'created',
+        label: 'Added',
+        // Composite sort: `created` (YYYY-MM-DD, lexicographically correct
+        // for ISO dates) + a zero-padded P-id suffix so products saved on
+        // the same day sort by id. Falls back to 0 for seed rows whose id
+        // doesn't follow the P<N> pattern, which puts them after any
+        // modern admin-created product on the same day — exactly what the
+        // admin wants when they just hit "Add product".
+        sort: (p) => {
+          const n = parseInt(String(p.id || '').replace(/^P/, ''), 10);
+          const suffix = Number.isFinite(n) ? String(n).padStart(8, '0') : '00000000';
+          return `${p.created || ''}|${suffix}`;
+        },
+        render: (p) => esc(fmtD(p.created)),
+      },
       { key: 'status', label: 'Status', sort: true, render: (p) => {
         // CAT-06: Active + zero stock everywhere = sold out on the store. Shown as
         // a distinct pill so staff see it at a glance; the underlying status stays Active.
@@ -516,9 +536,12 @@ PAGES.journal = () => `<div class="page-head"><div><h1 class="h1">Journal</h1><p
 
 /* =============== STOREFRONT =============== */
 PAGES.storefront = () => `<div class="page-head"><div><h1 class="h1">Storefront pages</h1><p class="lede">The words and picks on the customer pages. Product, category and journal pages fill themselves from the catalogue.</p></div></div>
-  <section class="panel"><div class="panel-head"><div><h2 class="h2">Home Promo banners</h2><p>The "Bridal Edit" strip on the homepage. Controls the image, eyebrow, title and description shown on the storefront.</p></div></div>
+  <section class="panel"><div class="panel-head"><div><h2 class="h2">Section banners</h2><p>Editorial banners on the storefront — the "Bridal Edit" strip on the homepage and the hero at the top of the About page. Each has its own image, eyebrow, title and description.</p></div></div>
     <div class="panel-body" style="display:grid;gap:16px">
-      ${[{ slot: 'bridal', label: 'The Bridal Edit' }].map((meta) => {
+      ${[
+        { slot: 'bridal', label: 'The Bridal Edit (homepage)' },
+        { slot: 'about', label: 'About page hero' },
+      ].map((meta) => {
         const b = HOME_BANNERS.find((x) => x.slot === meta.slot) || { slot: meta.slot, image: '', eyebrow: '', title: '', description: '' };
         return `<div style="border:1px solid var(--line);padding:16px;display:grid;gap:12px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
@@ -543,23 +566,18 @@ PAGES.storefront = () => `<div class="page-head"><div><h1 class="h1">Storefront 
       }).join('')}
     </div>
   </section>
-  <section class="panel"><div class="panel-head"><div><h2 class="h2">Pages</h2><p>Each page has a hero banner shown above the content. Recommended: 1600×500 px, under 500 KB.</p></div></div><div class="scroll" style="margin-top:12px"><table class="t"><thead><tr><th><span>Page</span></th><th><span>What it holds</span></th><th><span>Banner</span></th><th><span>Last updated</span></th><th><span></span></th></tr></thead><tbody>
+  <section class="panel"><div class="panel-head"><div><h2 class="h2">Pages</h2><p>Words and policy content for the customer-facing pages. Images for these pages come from the catalogue — not managed here.</p></div></div><div class="scroll" style="margin-top:12px"><table class="t"><thead><tr><th><span>Page</span></th><th><span>What it holds</span></th><th><span>Last updated</span></th><th><span></span></th></tr></thead><tbody>
     ${PAGES_CMS.map((p, i) => {
       // The Home page's hero is now managed in the "Home hero slides" panel
       // below — hide the Home row here so there is one source of truth.
       // `return ''` instead of filtering keeps every other row's `i` aligned
-      // with its PAGES_CMS index, which editPage/deletePage/removePageBanner
-      // all rely on via data-i.
+      // with its PAGES_CMS index, which editPage/deletePage all rely on via data-i.
       if (p.name === 'Home') return '';
       // LEGAL-01: flag policy pages with a body under 800 characters as still a stub.
       const bodyLen = (p.body || '').trim().length;
       const stub = bodyLen < 800;
       const stubBadge = stub ? `<span class="pill p-warn" title="Policy body is ${bodyLen} characters; recommend 800+">Stub body</span>` : '';
-      const banners = Array.isArray(p.banners) ? p.banners : (p.banner ? [p.banner] : []);
-      const thumbs = banners.length
-        ? banners.map((url, bi) => `<span style="position:relative;display:inline-block"><img src="${esc(url)}" alt="" style="width:88px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--line);display:block"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removePageBanner" data-i="${i}" data-bi="${bi}" aria-label="Remove banner ${bi + 1}" style="position:absolute;top:-6px;right:-6px;background:var(--bg);border:1px solid var(--line);border-radius:999px;width:18px;height:18px;line-height:14px;padding:0">×</button></span>`).join('')
-        : '<span class="small muted">No banner</span>';
-      return `<tr><td><b>${esc(p.name)}</b>${stubBadge}</td><td class="wrap muted">${esc(p.desc)}</td><td><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${thumbs}<label class="btn btn-sec btn-sm" for="pg-banner-${i}">${banners.length ? 'Add more' : 'Upload'}</label><input type="file" id="pg-banner-${i}" accept="image/*" multiple hidden data-i="${i}"></div></td><td>${esc(fmtD(p.updated))}</td><td class="r"><button type="button" class="btn btn-ghost btn-sm" data-act="editPage" data-i="${i}">Edit</button><button type="button" class="btn btn-ghost btn-sm" data-act="deletePage" data-i="${i}">Delete</button></td></tr>`;
+      return `<tr><td><b>${esc(p.name)}</b>${stubBadge}</td><td class="wrap muted">${esc(p.desc)}</td><td>${esc(fmtD(p.updated))}</td><td class="r"><button type="button" class="btn btn-ghost btn-sm" data-act="editPage" data-i="${i}">Edit</button><button type="button" class="btn btn-ghost btn-sm" data-act="deletePage" data-i="${i}">Delete</button></td></tr>`;
     }).join('')}
   </tbody></table></div></section>
   ${heroSlidesPanel()}`;
@@ -693,7 +711,13 @@ const varRows = () => products.flatMap((p) => p.variants.filter((v) => v.sku).ma
     inStock: ps.filter((u) => u.status === 'In stock').length,
     reserved: ps.filter((u) => ['Reserved', 'Packed'].includes(u.status)).length,
     sold30: ps.filter((u) => u.status === 'Shipped' && daysFrom(u.at) >= -30).length,
-    unprinted: ps.filter((u) => !u.printed && ['In stock', 'Reserved', 'Returned'].includes(u.status)).length,
+    // Labels-to-print tracks only pieces still sitting in the warehouse
+    // waiting to be labelled — In stock plus Returned (which come back
+    // to QC + relabelling). Reserved / Packed pieces are already pulled
+    // for an order; printing a fresh label at this point would conflict
+    // with the one that got them scanned into the Reserved state, so
+    // those are intentionally left out of the count.
+    unprinted: ps.filter((u) => !u.printed && ['In stock', 'Returned'].includes(u.status)).length,
   };
 }));
 

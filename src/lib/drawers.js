@@ -604,7 +604,10 @@ export function productDrawer(id) {
 
 /* ---------- CATEGORY ---------- */
 export function categoryDrawer(id) {
-  const c = id === 'new' ? { id: 'new', name: '', story: '', weaves: [], weight: 400, visible: true, saree: false, image: '' } : CAT[id];
+  const c = id === 'new' ? { id: 'new', name: '', story: '', weaves: [], weight: 400, visible: true, saree: false, image: '', stylingTitle: '', stylingIntro: '', stylingTips: [] } : CAT[id];
+  // Normalise to exactly four tip slots so the admin form always renders
+  // the same four columns (matches CategoryStylingGuide on the storefront).
+  const tips = Array.from({ length: 4 }, (_, i) => (c.stylingTips && c.stylingTips[i]) || { title: '', body: '' });
   // Local draft for image URL so saveCategory can read it back (new categories have no CAT[id] yet).
   categoryDrawer.image = c.image || '';
   openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">${esc(c.name || 'New category')}</h2><p class="small muted" style="margin:4px 0 0">${id === 'new' ? 'Inherits the standard filters and product template' : `${products.filter((p) => p.cat === c.id).length} products`}</p></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
@@ -627,6 +630,16 @@ export function categoryDrawer(id) {
       <div class="field span2"><label for="cat-weaves">Weaves and types</label><input class="ctl" id="cat-weaves" value="${esc(c.weaves.join(', '))}" placeholder="Comma separated"><span class="hint">These become the weave filter on the category page</span></div>
       <div class="field"><label for="cat-weight">Default shipping weight, grams</label><input class="ctl" id="cat-weight" value="${c.weight}" inputmode="numeric"></div>
       <div class="field"><label for="cat-saree">Product template</label><select class="ctl" id="cat-saree"><option value="no"${c.saree ? '' : ' selected'}>Standard</option><option value="yes"${c.saree ? ' selected' : ''}>Saree, with weave and zari panel</option></select></div>
+    </div>
+    <div class="d-sec" style="margin-top:22px"><h3>Styling notes</h3><p class="small muted" style="margin:0 0 10px">Shown as the "Wearing your …" editorial block on the category landing page. Leave empty to hide the whole section.</p>
+      <div class="form-grid">
+        <div class="field span2"><label for="cat-styling-title">Section title</label><input class="ctl" id="cat-styling-title" value="${esc(c.stylingTitle || '')}" placeholder="For example: Wearing your Mysore Silk"></div>
+        <div class="field span2"><label for="cat-styling-intro">Section intro</label><textarea class="ctl" id="cat-styling-intro" placeholder="One or two sentences setting up the four notes below">${esc(c.stylingIntro || '')}</textarea></div>
+        ${tips.map((t, i) => `
+          <div class="field"><label for="cat-tip-title-${i}">Note ${String(i + 1).padStart(2, '0')} title</label><input class="ctl" id="cat-tip-title-${i}" value="${esc(t.title)}" placeholder="For example: Blouse pairing"></div>
+          <div class="field"><label for="cat-tip-body-${i}">Note ${String(i + 1).padStart(2, '0')} body</label><textarea class="ctl" id="cat-tip-body-${i}" placeholder="One short paragraph">${esc(t.body)}</textarea></div>
+        `).join('')}
+      </div>
     </div></div>
     <div class="d-foot"><button type="button" class="btn btn-pri" data-act="saveCategory" data-id="${c.id}">Save category</button></div>`);
 }

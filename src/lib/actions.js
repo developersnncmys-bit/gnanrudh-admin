@@ -897,7 +897,27 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const weaves = val('cat-weaves').split(',').map((x) => x.trim()).filter(Boolean);
       if (!weaves.length) { e.textContent = 'Add at least one weave or type, so the category has a filter.'; e.hidden = false; return; }
       const image = categoryDrawer.image || '';
-      const data = { name, story: val('cat-story'), weaves, weight: Number(val('cat-weight')) || 400, saree: val('cat-saree') === 'yes', image };
+      // Pull the four styling-note slots back out of the form. An empty
+      // slot (both title AND body blank) drops out, so the storefront's
+      // "Styling Notes" section only renders filled rows and hides
+      // entirely when the admin leaves the whole block blank.
+      const stylingTips = [];
+      for (let i = 0; i < 4; i += 1) {
+        const t = val(`cat-tip-title-${i}`).trim();
+        const b = val(`cat-tip-body-${i}`).trim();
+        if (t || b) stylingTips.push({ title: t, body: b });
+      }
+      const data = {
+        name,
+        story: val('cat-story'),
+        weaves,
+        weight: Number(val('cat-weight')) || 400,
+        saree: val('cat-saree') === 'yes',
+        image,
+        stylingTitle: val('cat-styling-title').trim(),
+        stylingIntro: val('cat-styling-intro').trim(),
+        stylingTips,
+      };
       if (el.dataset.id === 'new') { const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-'); if (CAT[id]) { e.textContent = 'A category with that name already exists.'; e.hidden = false; return; } const c = { id, ...data, visible: true, price: [1000, 5000] }; categories.push(c); CAT[id] = c; toast(`${name} created. It appears on the store once it has live products.`); sync(api.categories.create({ _id: id, ...data, visible: true, price: [1000, 5000] }), 'create category'); }
       else { Object.assign(CAT[el.dataset.id], data); toast(`${name} saved.`); sync(api.categories.update(el.dataset.id, data), 'update category'); }
       categoryDrawer.image = '';
