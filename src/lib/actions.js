@@ -959,7 +959,19 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
         stylingIntro: val('cat-styling-intro').trim(),
         stylingTips,
       };
-      if (el.dataset.id === 'new') { const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-'); if (CAT[id]) { e.textContent = 'A category with that name already exists.'; e.hidden = false; return; } const c = { id, ...data, visible: true, price: [1000, 5000] }; categories.push(c); CAT[id] = c; toast(`${name} created. It appears on the store once it has live products.`); sync(api.categories.create({ _id: id, ...data, visible: true, price: [1000, 5000] }), 'create category'); }
+      if (el.dataset.id === 'new') {
+        const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        if (CAT[id]) { e.textContent = 'A category with that name already exists.'; e.hidden = false; return; }
+        // Stamp createdAt locally so the Categories table's "newest first"
+        // sort puts the just-created row at the top immediately, before
+        // the server responds with the canonical timestamp.
+        const nowIso = new Date().toISOString();
+        const c = { id, ...data, visible: true, price: [1000, 5000], createdAt: nowIso };
+        categories.push(c);
+        CAT[id] = c;
+        toast(`${name} created. It appears on the store once it has live products.`);
+        sync(api.categories.create({ _id: id, ...data, visible: true, price: [1000, 5000] }), 'create category');
+      }
       else { Object.assign(CAT[el.dataset.id], data); toast(`${name} saved.`); sync(api.categories.update(el.dataset.id, data), 'update category'); }
       categoryDrawer.image = '';
       closeDrawer(); renderPage();

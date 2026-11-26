@@ -272,7 +272,16 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
 PAGES.categories = () => `<div class="page-head"><div><h1 class="h1">Categories</h1><p class="lede">Each category has its own landing page, story section and filters. New categories inherit the standard filters and product template.</p></div>
     <button type="button" class="btn btn-pri" data-act="newCategory">${icon('plus')}New category</button></div>
   <section class="panel"><div class="scroll" style="border-top:0"><table class="t" style="min-width:880px"><thead><tr><th><span>Category</span></th><th><span>Weaves and types</span></th><th class="r"><span>Products</span></th><th class="r"><span>Sales, 30 days</span></th><th><span>Default shipping weight</span></th><th><span>Shown on store</span></th><th><span></span></th></tr></thead><tbody>
-  ${categories.map((c) => {
+  ${[...categories].sort((a, b) => {
+    // Newest first. `createdAt` comes from Mongoose timestamps on the
+    // Category model. Legacy rows that predate the field fall back to the
+    // `_id` slug (stable string compare) so the order is deterministic
+    // and the admin never sees rows jumping around between renders.
+    const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
+    const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
+    if (tb !== ta) return tb - ta;
+    return String(b.id || b._id || '').localeCompare(String(a.id || a._id || ''));
+  }).map((c) => {
     const inCat = products.filter((p) => p.cat === c.id);
     const liveInCat = inCat.filter((p) => p.status === 'Active').length;
     // CAT-05: a category with zero live products is hidden from the store even if
