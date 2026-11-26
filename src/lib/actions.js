@@ -27,6 +27,7 @@ import { bySku, findOrder, findPiece, beep } from './scanner.js';
 import { setInsTab, setInsCat, abCarts, AB } from './insights.js';
 import { api } from './api.js';
 import { settingsReady } from './validators.js';
+import * as XLSX from 'xlsx-js-style';
 
 /* Fire-and-forget: run an API call in the background, toast on failure. */
 const sync = (promise, label) => Promise.resolve().then(() => promise).catch((err) => toast(`Failed to ${label || 'save'}: ${err.message}`));
@@ -151,6 +152,39 @@ export function choosePalette(i, navigate) {
   const it = palItems[i]; if (!it) return;
   document.getElementById('palette').close();
   if (it[1].startsWith('/') || it[1].startsWith('#')) navigate(it[1]); else openEntity(it[1]);
+}
+
+/* ---------- XLSX export ---------- */
+// Writes an .xlsx file with the first row bolded + mild grey fill, so the
+// template a bulk-upload admin opens in Excel distinguishes headers from
+// data at a glance. The uploader itself still only accepts .csv — the
+// workflow is: download template.xlsx → edit → Save As CSV → upload.
+export function downloadXLSX(name, rows) {
+  if (!rows?.length) return;
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  // Bold + light-grey fill on the header row; left-align so wide headers
+  // don't centre over narrow data cells. Column widths computed from the
+  // longest value in each column so headers don't clip on first open.
+  const headerStyle = {
+    font: { bold: true, color: { rgb: '1A1A1A' } },
+    fill: { fgColor: { rgb: 'F2EFEA' } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+  };
+  const headerRow = rows[0] || [];
+  headerRow.forEach((_, c) => {
+    const addr = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[addr]) ws[addr].s = headerStyle;
+  });
+  ws['!cols'] = headerRow.map((_, c) => {
+    const maxLen = rows.reduce((m, r) => Math.max(m, String(r[c] ?? '').length), 0);
+    return { wch: Math.min(Math.max(10, maxLen + 2), 40) };
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Template');
+  try {
+    XLSX.writeFile(wb, name, { bookType: 'xlsx' });
+    toast(`Downloaded ${name} with ${plural(rows.length - 1, 'row')}. Open in Excel, fill in, Save As CSV, then upload.`);
+  } catch { toast('Your browser blocked the download. Open the admin in its own tab and try again.'); }
 }
 
 /* ---------- CSV export ---------- */
@@ -432,13 +466,13 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     cartRemindBulk: () => sendReminder(lvSelected('carts').map((id) => AB[id])),
     cartRemindProduct: (el) => sendReminder(abCarts.filter((a) => a.pids.includes(el.dataset.id) && a.status === 'Not contacted'), () => insightDrawer(el.dataset.id)),
     setTabLink: (el, e) => { e.preventDefault(); setSetTab(el.dataset.v); navigate('/settings'); },
-    // Phase 4 UX polish: "View store" opens the storefront URL from Settings in a new tab.
+    // "View store" opens the live Vercel deployment in a new tab. The
+    // URL is pinned here (not read from Settings) because the Settings
+    // field still holds a legacy custom-domain that doesn't resolve —
+    // change this one line when a real production domain is live.
     viewStore: (el, e) => {
       e.preventDefault();
-      const site = SETTINGS.store?.site || '';
-      const href = site ? (site.startsWith('http') ? site : `https://${site}`) : '';
-      if (!href) return toast('Set the storefront URL under Settings → Business → Site.');
-      window.open(href, '_blank', 'noopener');
+      window.open('https://gnanrudh-website.vercel.app/', '_blank', 'noopener');
     },
     exportExcel: (el) => exportList(routeRef.current, el.dataset.what === 'segment' ? 'customers' : el.dataset.what),
     exportSelected: () => exportList(routeRef.current, null, true),
@@ -914,7 +948,12 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
         story: val('cat-story'),
         weaves,
         weight: Number(val('cat-weight')) || 400,
-        saree: val('cat-saree') === 'yes',
+        // This is a saree-only shop, so every category uses the saree
+        // product template. The old "Product template" dropdown was removed
+        // from the drawer — we always persist `true` so legacy records that
+        // were ever saved as `false` get normalised the next time they're
+        // edited, and the storefront nav picks them up.
+        saree: true,
         image,
         stylingTitle: val('cat-styling-title').trim(),
         stylingIntro: val('cat-styling-intro').trim(),
@@ -1425,15 +1464,24 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     labelFmt: (el) => { setLabelFmt(el.dataset.v); renderPage(); },
 
     // Downloads a product-creation CSV template. Images are intentionally
-    // absent — admins add them later from each product's drawer, which is
-    // why bulk-created products default to Draft status.
+    // absent — admins add them later from each product's drawer. The hex
+    // column was removed: the backend now resolves the swatch from the
+    // colour name (Red / Peacock / Ivory / etc.) via
+    // backend/src/colours.js, so admins only type the name.
     bulkAddProductsTemplate: () => {
       const sampleCat = categories[0]?.name || 'Mysore Silk';
-      downloadCSV('products-template.csv', [
-        ['name', 'category', 'selling_price', 'mrp', 'qty', 'weave', 'occasions', 'colour', 'hex', 'size', 'sku', 'status'],
-        ['Peacock blue Mysore silk', sampleCat, '12500', '15000', '10', 'Mysore Silk', 'Festive|Everyday', 'Peacock', '#1f5f7a', '', '', 'Active'],
-        ['Ivory Banarasi with gold pallu', 'Banarasi', '28000', '32000', '5', 'Banarasi', 'Bridal', 'Ivory', '#f6f0e6', '', '', 'Active'],
-        ['', '', '', '', '', '', '', '', '', '', '', ''],
+      downloadXLSX('products-template.xlsx', [
+        ['name', 'category', 'selling_price', 'mrp', 'qty', 'weave', 'occasions', 'colour', 'sku', 'status'],
+        // Single-colour example — colour and qty are plain values.
+        ['Peacock blue Mysore silk', sampleCat, '12500', '15000', '10', 'Mysore Silk', 'Festive|Everyday', 'Peacock', '', 'Active'],
+        // Multi-colour example — colour and qty are pipe-separated and
+        // line up positionally: 3 variants, 500 pieces each. Hex/sku
+        // follow the same convention when you want to override them.
+        ['Festive silk saree', sampleCat, '9500', '12000', '500|500|500', 'Mysore Silk', 'Festive|Everyday', 'Peacock|Purple|Green', '', 'Active'],
+        // Multi-colour with a single qty — repeated for every variant,
+        // so this row creates 2 variants with 250 pieces each.
+        ['Ivory Banarasi with gold pallu', 'Banarasi', '28000', '32000', '250', 'Banarasi', 'Bridal', 'Ivory|Lavender', '', 'Active'],
+        ['', '', '', '', '', '', '', '', '', ''],
       ]);
     },
 
@@ -1450,7 +1498,7 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
           <form method="dialog" class="dlg">
             <h3 class="dlg-title">Bulk add products</h3>
             <p class="small muted" style="margin:4px 0 14px">
-              Upload a CSV of new products. Each row creates one product with an initial colour variant and goes <b>live on the store immediately</b>. Images are added later from the product&apos;s drawer; until then the fallback image shows on the card. Set the <code>status</code> column to <b>Draft</b> for any row you want to stage instead of publish. Download the template for the exact columns.
+              Upload a CSV of new products. Each row creates one product with an initial colour variant and goes <b>live on the store immediately</b>. Just type the colour name (Red, Peacock, Ivory, …) — the swatch is picked automatically, no hex code needed. Images are added later from the product&apos;s drawer; until then the fallback image shows on the card. Set the <code>status</code> column to <b>Draft</b> for any row you want to stage instead of publish. Download the template for the exact columns.
             </p>
             <div id="bapDrop" class="br-drop" tabindex="0" role="button" aria-label="Drop CSV here or click to pick a file">
               <div class="br-drop-ico">${icon('dl', 22)}</div>
@@ -1460,6 +1508,13 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
             </div>
             <div id="bapSummary" class="small muted" style="margin:14px 0 6px" hidden></div>
             <div id="bapPreview" style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md)" hidden></div>
+            <div id="bapLoader" class="bap-loader" hidden>
+              <div class="bap-spinner" aria-hidden="true"></div>
+              <div class="bap-loader-msg" id="bapLoaderMsg">Creating products…</div>
+              <div class="bap-bar" aria-hidden="true"><div class="bap-bar-fill" id="bapBarFill" style="width:0%"></div></div>
+              <div class="bap-loader-pct" id="bapLoaderPct">0%</div>
+              <div class="bap-loader-sub">Uploading in batches of 50 so a large import doesn&apos;t time out. Please don&apos;t close this tab until it finishes.</div>
+            </div>
             <div class="dlg-foot">
               <button type="button" class="btn btn-ghost" id="bapCancel">Cancel</button>
               <button type="button" class="btn btn-pri" id="bapSubmit" disabled>Create products</button>
@@ -1485,6 +1540,14 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
           #bulkAddProductsDlg table.br th{position:sticky;top:0;background:#fafafa;font-weight:600}
           #bulkAddProductsDlg tr.row-bad{background:#fff6f6}
           #bulkAddProductsDlg tr.row-bad td:last-child{color:#b00020}
+          #bulkAddProductsDlg .bap-loader{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:48px 20px;text-align:center}
+          #bulkAddProductsDlg .bap-spinner{width:42px;height:42px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--pri);animation:bapSpin 0.9s linear infinite}
+          #bulkAddProductsDlg .bap-loader-msg{font-weight:600;color:var(--ink)}
+          #bulkAddProductsDlg .bap-loader-sub{color:var(--muted);font-size:0.85rem;max-width:380px;line-height:1.45}
+          #bulkAddProductsDlg .bap-bar{width:min(420px,80%);height:8px;background:var(--line);border-radius:999px;overflow:hidden}
+          #bulkAddProductsDlg .bap-bar-fill{height:100%;background:var(--pri);border-radius:999px;transition:width .25s ease-out}
+          #bulkAddProductsDlg .bap-loader-pct{font-variant-numeric:tabular-nums;font-size:0.9rem;color:var(--ink);font-weight:600}
+          @keyframes bapSpin{to{transform:rotate(360deg)}}
         `;
         document.body.appendChild(style);
         document.body.appendChild(dlg);
@@ -1497,11 +1560,19 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const dropZone = dlg.querySelector('#bapDrop');
       const fileInput = dlg.querySelector('#bapFile');
 
-      const byCat = new Map();
-      for (const c of categories) {
-        byCat.set(String(c.id).toLowerCase(), c);
-        if (c.name) byCat.set(String(c.name).toLowerCase(), c);
-      }
+      // Rebuilt on every parse (see handleFile below) so a category the
+      // admin just added — which pushes into the shared `categories`
+      // array — is picked up without a page reload. Building it once at
+      // dialog-open time would freeze the lookup inside the handler's
+      // closure the first time the dialog opened.
+      const buildCatIndex = () => {
+        const map = new Map();
+        for (const c of categories) {
+          map.set(String(c.id).toLowerCase(), c);
+          if (c.name) map.set(String(c.name).toLowerCase(), c);
+        }
+        return map;
+      };
 
       const parseCsv = (text) => {
         const clean = text.replace(/^﻿/, '');
@@ -1568,6 +1639,9 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
         reader.onload = () => {
           const rows = parseCsv(String(reader.result || ''));
           if (!rows.length) { parsed = []; renderPreview(); return; }
+          // Build the SKU → category index fresh for this parse so newly
+          // created categories resolve without a page reload.
+          const byCat = buildCatIndex();
           const header = rows[0].map((h) => h.toLowerCase());
           // Required: name, category, selling_price (or legacy `price`),
           // colour, occasions.
@@ -1593,10 +1667,16 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
             const mrpCol = col('mrp') >= 0 ? col('mrp') : col('compareat');
             const mrpRaw = mrpCol >= 0 ? (r[mrpCol] || '') : '';
             const mrp = mrpRaw === '' ? null : Number(mrpRaw);
-            // Initial stock to receive; blank or non-numeric → 0.
+            // Initial stock to receive; `|` or `,` separated matching the
+            // colour list. Non-numeric cells drop to 0; backend pads short
+            // qty lists by repeating the last value.
             const qtyRaw = col('qty') >= 0 ? (r[col('qty')] || '') : '';
-            const qty = Math.max(0, parseInt(qtyRaw, 10) || 0);
-            const colour = r[col('colour')] || '';
+            const splitList = (s) => String(s || '').split(/[|,]/).map((x) => x.trim()).filter((x) => x.length > 0);
+            const qtys = splitList(qtyRaw).map((q) => Math.max(0, parseInt(q, 10) || 0));
+            // colour accepts multi-colour: pipe- OR comma-separated. Each
+            // value becomes its own variant in the created product.
+            const colourRaw = r[col('colour')] || '';
+            const colours = splitList(colourRaw);
             const occasions = (r[col('occasions')] || '').split('|').map((s) => s.trim()).filter(Boolean);
             const weave = col('weave') >= 0 ? r[col('weave')] : '';
             const hex = col('hex') >= 0 ? (r[col('hex')] || '') : '';
@@ -1604,16 +1684,27 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
             const sku = col('sku') >= 0 ? (r[col('sku')] || '') : '';
             const statusRaw = col('status') >= 0 ? (r[col('status')] || '') : '';
             const status = ['Draft', 'Active', 'Hidden'].includes(statusRaw) ? statusRaw : 'Draft';
-            if (!name) return { line, name, category, colour, ok: false, error: 'name is empty' };
-            if (!category) return { line, name, category, colour, ok: false, error: 'category is empty' };
-            if (!Number.isFinite(selling_price) || selling_price <= 0) return { line, name, category, selling_price: priceRaw, colour, ok: false, error: 'selling_price must be a positive number' };
-            if (mrp !== null && (!Number.isFinite(mrp) || mrp <= selling_price)) return { line, name, category, selling_price, mrp: mrpRaw, colour, ok: false, error: 'mrp must be greater than selling_price' };
-            if (!colour) return { line, name, category, selling_price, colour, ok: false, error: 'colour is empty' };
-            if (!occasions.length) return { line, name, category, selling_price, colour, ok: false, error: 'occasions required (pipe-separated)' };
+            // Total qty for the preview — pads a short qty list the same
+            // way the backend does (repeat the last) so the "pieces
+            // received" number in the preview matches what gets created.
+            const totalQty = colours.length
+              ? colours.reduce((acc, _, idx) => acc + (qtys[idx] !== undefined ? qtys[idx] : (qtys.length ? qtys[qtys.length - 1] : 0)), 0)
+              : 0;
+            if (!name) return { line, name, category, colour: colourRaw, ok: false, error: 'name is empty' };
+            if (!category) return { line, name, category, colour: colourRaw, ok: false, error: 'category is empty' };
+            if (!Number.isFinite(selling_price) || selling_price <= 0) return { line, name, category, selling_price: priceRaw, colour: colourRaw, ok: false, error: 'selling_price must be a positive number' };
+            if (mrp !== null && (!Number.isFinite(mrp) || mrp <= selling_price)) return { line, name, category, selling_price, mrp: mrpRaw, colour: colourRaw, ok: false, error: 'mrp must be greater than selling_price' };
+            if (!colours.length) return { line, name, category, selling_price, colour: colourRaw, ok: false, error: 'colour is empty' };
+            if (!occasions.length) return { line, name, category, selling_price, colour: colourRaw, ok: false, error: 'occasions required (pipe-separated)' };
             const cat = byCat.get(category.toLowerCase());
-            if (!cat) return { line, name, category, selling_price, colour, ok: false, error: `unknown category: ${category}` };
+            if (!cat) return { line, name, category, selling_price, colour: colourRaw, ok: false, error: `unknown category: ${category}` };
             return {
-              line, name, category, selling_price, mrp, qty, colour, occasions, weave, hex, size, sku, status,
+              line, name, category, selling_price, mrp,
+              qty: totalQty, // for the preview summary
+              qtys,          // raw per-variant numbers, sent to backend
+              colours,       // parsed array, backend receives pipe-joined
+              colour: colours.join(', '), // for the preview cell
+              occasions, weave, hex, size, sku, status,
               catName: cat.name, ok: true,
             };
           });
@@ -1641,41 +1732,134 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
             category: r.category,
             selling_price: r.selling_price,
             mrp: r.mrp,
-            qty: r.qty,
+            // Pipe-join every per-variant list so the backend's splitList
+            // picks it back into positional arrays. Single-colour rows
+            // just send "Peacock" / "500" and pad to one variant.
+            qty: (r.qtys && r.qtys.length ? r.qtys : [0]).join('|'),
             weave: r.weave,
             occasions: r.occasions.join('|'),
-            colour: r.colour,
+            colour: (r.colours || []).join('|'),
             hex: r.hex,
             size: r.size,
             sku: r.sku,
             status: r.status,
           }));
           if (!payload.length) return;
+
+          // Swap the preview for a progress panel. Both buttons disabled
+          // so a stray click can't leave the DB half-written.
+          const summaryEl = dlg.querySelector('#bapSummary');
+          const previewEl = dlg.querySelector('#bapPreview');
+          const dropEl = dlg.querySelector('#bapDrop');
+          const loaderEl = dlg.querySelector('#bapLoader');
+          const loaderMsgEl = dlg.querySelector('#bapLoaderMsg');
+          const barFillEl = dlg.querySelector('#bapBarFill');
+          const pctEl = dlg.querySelector('#bapLoaderPct');
+          const cancelBtn = dlg.querySelector('#bapCancel');
+          if (summaryEl) summaryEl.hidden = true;
+          if (previewEl) previewEl.hidden = true;
+          if (dropEl) dropEl.hidden = true;
+          if (loaderEl) loaderEl.hidden = false;
           submitBtn.disabled = true;
+          if (cancelBtn) cancelBtn.disabled = true;
+
+          // Chunked upload: split the payload so a 1,000-row import doesn't
+          // sit on a single serverless function for 60+ seconds (and so the
+          // admin gets a real progress percentage, not a frozen spinner).
+          // 50 rows per chunk keeps each request well inside Vercel's
+          // wall-clock budget even when every row carries hundreds of
+          // pieces; progress bar updates between chunks.
+          const CHUNK_SIZE = 50;
+          const chunks = [];
+          for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
+            chunks.push(payload.slice(i, i + CHUNK_SIZE));
+          }
+          const totals = { ok: 0, failed: 0, pieces: 0 };
+          let firstFail = null;
+          let hardError = null;
+          let processed = 0;
+          const total = payload.length;
+          const updateProgress = () => {
+            const pct = total === 0 ? 100 : Math.min(100, Math.round((processed / total) * 100));
+            if (barFillEl) barFillEl.style.width = `${pct}%`;
+            if (pctEl) pctEl.textContent = `${pct}%`;
+            if (loaderMsgEl) {
+              loaderMsgEl.textContent = processed < total
+                ? `Creating products · ${processed.toLocaleString()} of ${total.toLocaleString()}…`
+                : 'Finishing up — refreshing the catalogue…';
+            }
+          };
+          updateProgress();
+
           try {
-            const res = await api.products.bulkCreate(payload);
-            const t = res?.totals || { ok: 0, failed: 0, pieces: 0 };
-            const pieceNote = t.pieces ? `, ${t.pieces} ${t.pieces === 1 ? 'piece' : 'pieces'} received` : '';
-            // Surface the first failure reason inline so the admin can
-            // act on it without hunting through server logs.
-            const firstFail = (res?.results || []).find((r) => !r.ok);
-            const skipNote = t.failed
-              ? `; ${t.failed} skipped${firstFail?.error ? ` (first: ${firstFail.error})` : ''}`
-              : '';
-            toast(`${t.ok} ${t.ok === 1 ? 'product' : 'products'} created${pieceNote}${skipNote}. Open each one to upload images.`);
-            await refresh('products');
-            if (t.pieces) await refresh('pieces');
-            renderPage(); renderNav();
-            dlg.close();
+            for (const chunk of chunks) {
+              const res = await api.products.bulkCreate(chunk);
+              const t = res?.totals || { ok: 0, failed: 0, pieces: 0 };
+              totals.ok += t.ok || 0;
+              totals.failed += t.failed || 0;
+              totals.pieces += t.pieces || 0;
+              if (!firstFail) {
+                const fail = (res?.results || []).find((r) => !r.ok);
+                if (fail) firstFail = fail;
+              }
+              processed += chunk.length;
+              updateProgress();
+            }
           } catch (err) {
+            hardError = err;
+          }
+
+          if (hardError && totals.ok === 0) {
+            // Nothing landed at all — restore the preview so the admin can
+            // read the error and retry without re-uploading the CSV.
+            if (loaderEl) loaderEl.hidden = true;
+            if (dropEl) dropEl.hidden = false;
+            if (previewEl) previewEl.hidden = false;
+            if (summaryEl) summaryEl.hidden = false;
             submitBtn.disabled = false;
-            toast(`Bulk add failed: ${err.message}`);
+            if (cancelBtn) cancelBtn.disabled = false;
+            toast(`Bulk add failed: ${hardError.message}`);
+            return;
+          }
+
+          const pieceNote = totals.pieces ? `, ${totals.pieces} ${totals.pieces === 1 ? 'piece' : 'pieces'} received` : '';
+          const skipNote = totals.failed
+            ? `; ${totals.failed} skipped${firstFail?.error ? ` (first: ${firstFail.error})` : ''}`
+            : '';
+          const partialNote = hardError ? ` Upload stopped partway: ${hardError.message}.` : '';
+          toast(`${totals.ok} ${totals.ok === 1 ? 'product' : 'products'} created${pieceNote}${skipNote}.${partialNote}`);
+          // Close the dialog BEFORE the catalogue refresh — paginating
+          // every product takes several seconds on a big store and the
+          // "Finishing up…" screen felt frozen to admins. The refresh
+          // runs in the background; renderPage/renderNav only fire if it
+          // succeeds so a stale list isn't painted over the fresh one.
+          dlg.close();
+          if (totals.ok || totals.failed) {
+            Promise.resolve()
+              .then(async () => {
+                await refresh('products');
+                if (totals.pieces) await refresh('pieces');
+                renderPage(); renderNav();
+              })
+              .catch((err) => {
+                console.warn('[bulkAdd] background refresh failed:', err.message);
+                toast('Products created, but the catalogue list didn\'t refresh — reload the page to see them.');
+              });
           }
         });
       }
 
       parsed = [];
       fileInput.value = '';
+      // Reset the UI from the last session — hide the progress loader
+      // and bring back the drop-zone so a second-use open isn't stuck
+      // showing the previous upload's 100% bar.
+      const loaderResetEl = dlg.querySelector('#bapLoader');
+      const dropResetEl = dlg.querySelector('#bapDrop');
+      const cancelResetBtn = dlg.querySelector('#bapCancel');
+      if (loaderResetEl) loaderResetEl.hidden = true;
+      if (dropResetEl) dropResetEl.hidden = false;
+      if (cancelResetBtn) cancelResetBtn.disabled = false;
       renderPreview();
       dlg.showModal();
     },

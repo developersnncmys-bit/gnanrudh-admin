@@ -604,7 +604,11 @@ export function productDrawer(id) {
 
 /* ---------- CATEGORY ---------- */
 export function categoryDrawer(id) {
-  const c = id === 'new' ? { id: 'new', name: '', story: '', weaves: [], weight: 400, visible: true, saree: false, image: '', stylingTitle: '', stylingIntro: '', stylingTips: [] } : CAT[id];
+  // New categories default to `saree: true` so they show up in the
+  // storefront's "Shop by Weave" nav + mega-menu without the admin having
+  // to remember to flip the Product template dropdown. Switch to Standard
+  // only when creating a non-saree aisle (Accessories, Jewellery, etc.).
+  const c = id === 'new' ? { id: 'new', name: '', story: '', weaves: [], weight: 400, visible: true, saree: true, image: '', stylingTitle: '', stylingIntro: '', stylingTips: [] } : CAT[id];
   // Normalise to exactly four tip slots so the admin form always renders
   // the same four columns (matches CategoryStylingGuide on the storefront).
   const tips = Array.from({ length: 4 }, (_, i) => (c.stylingTips && c.stylingTips[i]) || { title: '', body: '' });
@@ -628,8 +632,7 @@ export function categoryDrawer(id) {
       </div>
       <div class="field span2"><label for="cat-story">Landing page story</label><textarea class="ctl" id="cat-story" placeholder="A line or two about what this aisle is for">${esc(c.story)}</textarea><span class="hint">Shown at the top of the category page</span></div>
       <div class="field span2"><label for="cat-weaves">Weaves and types</label><input class="ctl" id="cat-weaves" value="${esc(c.weaves.join(', '))}" placeholder="Comma separated"><span class="hint">These become the weave filter on the category page</span></div>
-      <div class="field"><label for="cat-weight">Default shipping weight, grams</label><input class="ctl" id="cat-weight" value="${c.weight}" inputmode="numeric"></div>
-      <div class="field"><label for="cat-saree">Product template</label><select class="ctl" id="cat-saree"><option value="no"${c.saree ? '' : ' selected'}>Standard</option><option value="yes"${c.saree ? ' selected' : ''}>Saree, with weave and zari panel</option></select></div>
+      <div class="field span2"><label for="cat-weight">Default shipping weight, grams</label><input class="ctl" id="cat-weight" value="${c.weight}" inputmode="numeric"></div>
     </div>
     <div class="d-sec" style="margin-top:22px"><h3>Styling notes</h3><p class="small muted" style="margin:0 0 10px">Shown as the "Wearing your …" editorial block on the category landing page. Leave empty to hide the whole section.</p>
       <div class="form-grid">
