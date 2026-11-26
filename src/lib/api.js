@@ -203,6 +203,17 @@ export const api = {
     changePassword: (current, next) => post('/auth/password', { current, next }),
   },
 
+  // Team management — only owners can mutate. Backend enforces the same.
+  // See backend/src/routes/team.js for the exact rules (last-owner guards,
+  // self-disable / self-delete forbidden, tokenInvalidBefore bumps).
+  team: {
+    list: () => list('/team'),
+    invite: ({ email, name, role, password }) => post('/team', { email, name, role, password }),
+    update: (id, patch) => request(`/team/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
+    resetPassword: (id, password) => post(`/team/${encodeURIComponent(id)}/reset-password`, { password }),
+    remove: (id) => del(`/team/${encodeURIComponent(id)}`),
+  },
+
   uploads: {
     upload: uploadFiles,
     remove: (filename) => del(`/uploads/${encodeURIComponent(filename)}`),

@@ -34,6 +34,11 @@ function App() {
   const [sideOpen, setSideOpen] = useState(false);
   const [signedIn, setSignedIn] = useState(() => Boolean(auth.get()));
   const [bootState, setBootState] = useState({ status: 'loading', error: null });
+  // Signed-in user profile (name, email, role). Fetched via /auth/me when
+  // signedIn flips to true — powers the TopBar name + role chip and lets
+  // downstream UI (team tab, future permission checks) read the current
+  // identity without a second round-trip.
+  const [me, setMe] = useState(null);
   const [, forceRender] = useState(0);
   const routeRef = useRef(route);
   routeRef.current = route;
@@ -81,8 +86,22 @@ function App() {
     return () => { cancelled = true; };
   }, [signedIn]);
 
+  // Fetch the signed-in user's profile so the TopBar can show their actual
+  // name + role. Runs in parallel with bootstrap — the TopBar paints a
+  // placeholder ("Admin / …") until this resolves. On 401 the global
+  // onAuthExpired handler already handles the sign-out; here we just clear
+  // the stale profile if the fetch rejects for any other reason.
+  useEffect(() => {
+    if (!signedIn) { setMe(null); return; }
+    let cancelled = false;
+    api.auth.me()
+      .then((u) => { if (!cancelled) setMe(u); })
+      .catch(() => { if (!cancelled) setMe(null); });
+    return () => { cancelled = true; };
+  }, [signedIn]);
+
   // Any protected API call returning 401 flips us back to the login screen
-  useEffect(() => onAuthExpired(() => setSignedIn(false)), []);
+  useEffect(() => onAuthExpired(() => { setSignedIn(false); setMe(null); }), []);
 
   // Live-data refresh on route change. The admin's local pieces/orders/
   // products arrays are populated once at bootstrap; without this, a
@@ -567,7 +586,7 @@ function App() {
       <div className="shell">
         <Sidebar route={route} open={sideOpen} />
         <div className="main">
-          <TopBar onMenu={() => setSideOpen((v) => !v)} onSearch={openPalette} onBell={onBell} onSignOut={signOut} />
+          <TopBar me={me} onMenu={() => setSideOpen((v) => !v)} onSearch={openPalette} onBell={onBell} onSignOut={signOut} />
           {bootState.status === 'loading' ? (
             <main className="content"><p className="lede">Loading data from the server…</p></main>
           ) : bootState.status === 'error' ? (

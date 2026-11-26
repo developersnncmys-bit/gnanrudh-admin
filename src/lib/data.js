@@ -9,7 +9,51 @@ import { build as buildInsights } from './insights.js';
 /* ---------- Static config (not from API) ---------- */
 export const STORE_STATE = 'Karnataka';
 export const CHECK_ACTS = ['toggleCoupon', 'toggleCat'];
-export const COLORS = [['Peacock blue', '#1f5f7a'], ['Mango yellow', '#e0a526'], ['Rani pink', '#c2185b'], ['Bottle green', '#1e5c3a'], ['Maroon', '#6d1b2c'], ['Mustard', '#c9932b'], ['Wine', '#5a1f33'], ['Ivory', '#ece2cc'], ['Lotus pink', '#e8a3b5'], ['Parrot green', '#6aa84f'], ['Royal blue', '#2c4fa3'], ['Black', '#26232a'], ['Onion pink', '#d9a5a0'], ['Teal', '#1d7473'], ['Lavender', '#a693c9']];
+// Canonical colour list. Mirrors backend/src/colours.js so the bulk-upload
+// dropdown admins see is exactly what the backend hex resolver understands —
+// no more "picked Mango yellow in the dropdown, got beige on the storefront"
+// surprises. Format stays [name, hex] for every existing consumer.
+export const COLORS = [
+  // Reds
+  ['Red',       '#DC2626'],
+  ['Maroon',    '#7E1D1D'],
+  ['Wine',      '#4A0815'],
+  // Pinks
+  ['Pink',      '#DB2777'],
+  ['Magenta',   '#A21CAF'],
+  // Oranges / rust
+  ['Orange',    '#F97316'],
+  ['Rust',      '#C2410C'],
+  // Yellows / golds
+  ['Yellow',    '#EAB308'],
+  ['Mustard',   '#A16207'],
+  ['Gold',      '#DAA520'],
+  // Neutrals
+  ['Cream',     '#FEF3C7'],
+  ['Ivory',     '#F2E9D8'],
+  ['Beige',     '#D6BD8C'],
+  ['White',     '#FFFFFF'],
+  // Greens
+  ['Mint',      '#34D399'],
+  ['Green',     '#16A34A'],
+  ['Olive',     '#65A30D'],
+  ['Forest',    '#166534'],
+  // Blue-greens
+  ['Teal',      '#0D9488'],
+  ['Peacock',   '#0E7490'],
+  // Blues
+  ['Sky Blue',  '#0EA5E9'],
+  ['Blue',      '#2563EB'],
+  ['Navy',      '#1E40AF'],
+  ['Midnight',  '#1E1B4B'],
+  // Purples
+  ['Lavender',  '#C4B5FD'],
+  ['Purple',    '#9333EA'],
+  // Browns / blacks / greys
+  ['Brown',     '#92400E'],
+  ['Grey',      '#6B7280'],
+  ['Black',     '#000000'],
+];
 export const BORDERS = ['Temple border', 'Korvai contrast', 'Plain zari', 'Thread border', 'No border'];
 // Hydrated from /api/occasions on bootstrap. Kept as a plain string array
 // so every existing dropdown/filter that reads OCCASIONS keeps working.
@@ -49,6 +93,10 @@ export const SCENES = [];
 export const PAGES_CMS = [];
 export const pieces = [];
 export const moves = [];
+// Team (admin users). Lazy-loaded the first time Settings → Team is opened
+// via ensureTeamLoaded(). Kept out of bootstrap because 99% of admin
+// sessions never visit the tab.
+export const team = [];
 
 /* Lookup maps */
 export const CAT = {};
@@ -306,4 +354,30 @@ export function ensureMovementsLoaded() {
       return moves;
     });
   return movementsLoadPromise;
+}
+
+// Lazy loader for the team (admin users) roster. Same pattern as
+// ensureMovementsLoaded — idempotent, in-flight promise dedupes concurrent
+// callers. Force-refreshes after any mutation via refreshTeam() so the
+// Settings → Team table always reflects the latest DB state.
+let teamLoadPromise = null;
+export function ensureTeamLoaded() {
+  if (team.length) return Promise.resolve(team);
+  if (teamLoadPromise) return teamLoadPromise;
+  teamLoadPromise = api.team.list()
+    .then((d) => {
+      refill(team, (d || []).map(norm));
+      return team;
+    })
+    .catch((err) => {
+      console.warn('[data] team lazy-load failed:', err?.message || err);
+      teamLoadPromise = null;
+      return team;
+    });
+  return teamLoadPromise;
+}
+export async function refreshTeam() {
+  teamLoadPromise = null;
+  refill(team, []);
+  return ensureTeamLoaded();
 }

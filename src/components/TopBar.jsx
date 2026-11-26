@@ -1,6 +1,25 @@
 import React from 'react';
 
-export default function TopBar({ onMenu, onSearch, onBell, onSignOut }) {
+// Pretty labels for the role chip. Keep in sync with backend ROLES
+// (owner / manager / packer / support — see backend/src/models/User.js).
+const ROLE_LABEL = {
+  owner: 'Owner',
+  manager: 'Manager',
+  packer: 'Packer',
+  support: 'Support',
+};
+
+export default function TopBar({ me, onMenu, onSearch, onBell, onSignOut }) {
+  // Prefer the user's full name; fall back to the local-part of their
+  // email ("priya.natarajan@…" → "priya.natarajan"), then to "Admin" if
+  // the /me call hasn't resolved yet (first paint after sign-in).
+  const displayName = me?.name
+    || (me?.email ? me.email.split('@')[0] : 'Admin');
+  const displayRole = me?.role
+    ? (ROLE_LABEL[me.role] || me.role)
+    : 'Signed in';
+  // Single-letter avatar based on the display name's first printable char.
+  const avatarChar = (displayName.trim()[0] || 'A').toUpperCase();
   return (
     <header className="top">
       <button
@@ -42,11 +61,11 @@ export default function TopBar({ onMenu, onSearch, onBell, onSignOut }) {
             <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
           </svg>
         </button>
-        <div className="me">
-          <span className="avatar av0">G</span>
+        <div className="me" title={me?.email || ''}>
+          <span className="avatar av0">{avatarChar}</span>
           <span>
-            <span className="me-name">GnanRudh Admin</span><br />
-            <span className="me-role">Signed in</span>
+            <span className="me-name">{displayName}</span><br />
+            <span className="me-role">{displayRole}</span>
           </span>
         </div>
         <button

@@ -159,9 +159,14 @@ export function docInvoice(o, credit = false) {
       <section class="inv-parties">
         <div class="inv-card">
           <h3>Billed to</h3>
-          <p class="inv-name">${esc(c.name)}</p>
-          <p>${esc(c.city)}, ${esc(c.state)} ${esc(o.ship.pin || '')}</p>
+          <p class="inv-name">${esc(o.billingName || c.name)}</p>
+          ${o.billingAddress
+            ? `<p>${esc(o.billingAddress).replace(/\n/g, '<br>')}</p>`
+            : `<p>${esc(c.city)}, ${esc(c.state)} ${esc(o.ship.pin || '')}</p>`}
           <p>${esc(c.phone)}</p>
+          ${o.billingGstin
+            ? `<p style="margin-top:6px"><span class="inv-label">GSTIN</span> <strong>${esc(o.billingGstin)}</strong></p>`
+            : ''}
         </div>
         <div class="inv-card">
           <h3>Shipped to</h3>
@@ -174,7 +179,7 @@ export function docInvoice(o, credit = false) {
           <dl>
             <dt>Supply type</dt><dd>${intra ? 'Intra-state (CGST + SGST)' : 'Inter-state (IGST)'}</dd>
             <dt>Reverse charge</dt><dd>No</dd>
-            <dt>Customer type</dt><dd>Unregistered</dd>
+            <dt>Customer type</dt><dd>${o.billingGstin ? 'Registered (B2B)' : 'Unregistered'}</dd>
           </dl>
         </div>
       </section>

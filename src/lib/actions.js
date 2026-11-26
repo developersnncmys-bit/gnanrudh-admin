@@ -9,6 +9,7 @@ import {
   reviews, journal, SCENES, PAGES_CMS, SETTINGS, CRM, featured, setFeatured,
   bumpInv, bumpCn, computeCRM, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS,
   pieces, PIECE, varRef, refresh, ensureMovementsLoaded,
+  team, ensureTeamLoaded, refreshTeam,
 } from './data.js';
 import { ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, LV, lvSelected } from './renderers.js';
 import {
@@ -28,6 +29,7 @@ import { setInsTab, setInsCat, abCarts, AB } from './insights.js';
 import { api } from './api.js';
 import { settingsReady } from './validators.js';
 import * as XLSX from 'xlsx-js-style';
+import ExcelJS from 'exceljs';
 
 /* Fire-and-forget: run an API call in the background, toast on failure. */
 const sync = (promise, label) => Promise.resolve().then(() => promise).catch((err) => toast(`Failed to ${label || 'save'}: ${err.message}`));
@@ -155,36 +157,147 @@ export function choosePalette(i, navigate) {
 }
 
 /* ---------- XLSX export ---------- */
-// Writes an .xlsx file with the first row bolded + mild grey fill, so the
-// template a bulk-upload admin opens in Excel distinguishes headers from
-// data at a glance. The uploader itself still only accepts .csv — the
-// workflow is: download template.xlsx → edit → Save As CSV → upload.
-export function downloadXLSX(name, rows) {
+// Writes an .xlsx file via ExcelJS. Headers are bold + mild grey fill so
+// an admin opening the template in Excel distinguishes them from data at
+// a glance. The uploader itself still only accepts .csv — the workflow
+// is: download template.xlsx → edit (dropdowns light up for validated
+// columns) → Save As CSV → upload.
+//
+// Optional `validations`: map of column-index → { label, options[] }.
+// For each entry we do two things:
+//   1. Attach a real Excel data-validation list to rows 2–1001 of that
+//      column on the Template sheet so clicking a cell shows the native
+//      dropdown arrow in Excel / LibreOffice / Numbers.
+//   2. Add a second "Reference" sheet with each validation listed as its
+//      own column — a guaranteed-visible cheat sheet even in viewers that
+//      strip data-validation XML.
+//
+// Async because ExcelJS writes to an ArrayBuffer via a promise; we still
+// trigger the browser download via a blob + anchor click. Callers can
+// fire-and-forget — the toast confirms once the file is saved.
+export async function downloadXLSX(name, rows, { validations } = {}) {
   if (!rows?.length) return;
-  const ws = XLSX.utils.aoa_to_sheet(rows);
-  // Bold + light-grey fill on the header row; left-align so wide headers
-  // don't centre over narrow data cells. Column widths computed from the
-  // longest value in each column so headers don't clip on first open.
-  const headerStyle = {
-    font: { bold: true, color: { rgb: '1A1A1A' } },
-    fill: { fgColor: { rgb: 'F2EFEA' } },
-    alignment: { horizontal: 'left', vertical: 'center' },
-  };
-  const headerRow = rows[0] || [];
-  headerRow.forEach((_, c) => {
-    const addr = XLSX.utils.encode_cell({ r: 0, c });
-    if (ws[addr]) ws[addr].s = headerStyle;
-  });
-  ws['!cols'] = headerRow.map((_, c) => {
-    const maxLen = rows.reduce((m, r) => Math.max(m, String(r[c] ?? '').length), 0);
-    return { wch: Math.min(Math.max(10, maxLen + 2), 40) };
-  });
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Template');
   try {
-    XLSX.writeFile(wb, name, { bookType: 'xlsx' });
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'House of GnanRudh admin';
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet('Template', {
+      views: [{ state: 'frozen', ySplit: 1 }], // keep header row visible on scroll
+    });
+    const headerRow = rows[0] || [];
+    ws.addRows(rows);
+
+    // Header style: bold ink text, mild warm-grey fill, left-aligned.
+    const headerStyle = {
+      font: { bold: true, color: { argb: 'FF1A1A1A' } },
+      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2EFEA' } },
+      alignment: { horizontal: 'left', vertical: 'middle' },
+    };
+    ws.getRow(1).eachCell((cell) => {
+      cell.font = headerStyle.font;
+      cell.fill = headerStyle.fill;
+      cell.alignment = headerStyle.alignment;
+    });
+
+    // Column widths — pick the longest value per column, clamped between
+    // 10 and 40 chars so narrow columns don't look squished and wide ones
+    // don't push the header off-screen.
+    headerRow.forEach((_, c) => {
+      const maxLen = rows.reduce((m, r) => Math.max(m, String(r[c] ?? '').length), 0);
+      ws.getColumn(c + 1).width = Math.min(Math.max(10, maxLen + 2), 40);
+    });
+
+    if (validations) {
+      const validEntries = Object.entries(validations).filter(([, v]) => Array.isArray(v?.options) && v.options.length);
+      if (validEntries.length) {
+        // Reference sheet: header row = field labels, columns below = the
+        // allowed values for each. Readable at a glance.
+        const refHeaders = validEntries.map(([, v]) => v.label || 'Options');
+        const refMaxRows = validEntries.reduce((m, [, v]) => Math.max(m, v.options.length), 0);
+        const refWs = wb.addWorksheet('Reference', {
+          views: [{ state: 'frozen', ySplit: 1 }],
+        });
+        refWs.addRow(refHeaders);
+        for (let r = 0; r < refMaxRows; r += 1) {
+          refWs.addRow(validEntries.map(([, v]) => v.options[r] ?? ''));
+        }
+        refWs.getRow(1).eachCell((cell) => {
+          cell.font = headerStyle.font;
+          cell.fill = headerStyle.fill;
+          cell.alignment = headerStyle.alignment;
+        });
+        refHeaders.forEach((_, c) => {
+          const maxLen = (c < refHeaders.length)
+            ? Math.max(
+              String(refHeaders[c] ?? '').length,
+              ...validEntries[c][1].options.map((o) => String(o ?? '').length),
+            )
+            : 10;
+          refWs.getColumn(c + 1).width = Math.min(Math.max(12, maxLen + 2), 40);
+        });
+
+        // Native data-validation dropdowns on the Template sheet. ExcelJS
+        // writes a proper <dataValidations> XML block so Excel shows the
+        // arrow in each validated cell. Rows 2–1001 covered; admins
+        // who paste more can extend manually, which is fine.
+        validEntries.forEach(([colIdx, v]) => {
+          const col = Number(colIdx);
+          // formula1 wraps the list in double quotes and escapes any
+          // literal quote inside each option. Excel caps inline lists at
+          // ~255 chars; for longer lists we fall back to a formula
+          // referencing the Reference sheet column so the dropdown still
+          // appears without blowing the length limit.
+          const inline = v.options.map((o) => String(o).replace(/"/g, '""')).join(',');
+          const formula1 = inline.length < 250
+            ? `"${inline}"`
+            // The Reference sheet column at the matching index. Column
+            // letters: validEntries index + 1 → Excel column letter.
+            : `=Reference!$${excelColLetter(validEntries.findIndex(([ci]) => Number(ci) === col) + 1)}$2:$${excelColLetter(validEntries.findIndex(([ci]) => Number(ci) === col) + 1)}$${refMaxRows + 1}`;
+          for (let r = 2; r <= 1001; r += 1) {
+            ws.getCell(r, col + 1).dataValidation = {
+              type: 'list',
+              allowBlank: true,
+              formulae: [formula1],
+              showErrorMessage: true,
+              errorTitle: 'Not in the allowed list',
+              error: `Pick a value from the Reference sheet for the "${v.label || 'this'}" column.`,
+            };
+          }
+        });
+      }
+    }
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
     toast(`Downloaded ${name} with ${plural(rows.length - 1, 'row')}. Open in Excel, fill in, Save As CSV, then upload.`);
-  } catch { toast('Your browser blocked the download. Open the admin in its own tab and try again.'); }
+  } catch (err) {
+    console.error('[downloadXLSX]', err);
+    toast('Could not generate the Excel file. Open the admin in its own tab and try again.');
+  }
+}
+
+// A → Z, AA → ZZ … column-letter helper for building Excel cell refs
+// when we need to point a data-validation formula at the Reference sheet.
+function excelColLetter(n) {
+  let s = '';
+  let x = n;
+  while (x > 0) {
+    const mod = (x - 1) % 26;
+    s = String.fromCharCode(65 + mod) + s;
+    x = Math.floor((x - 1) / 26);
+  }
+  return s || 'A';
 }
 
 /* ---------- CSV export ---------- */
@@ -458,7 +571,17 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
   return {
     closeDrawer: () => closeDrawer(),
     dashRange: (el) => { setDashRange(Number(el.dataset.v)); renderPage(); },
-    setTab: (el) => { setSetTab(el.dataset.v); renderPage(); },
+    setTab: (el) => {
+      const v = el.dataset.v;
+      setSetTab(v);
+      renderPage();
+      // Team roster is lazy-loaded the first time Settings → Team is
+      // opened so the admin's boot sequence doesn't carry an extra
+      // round-trip that most sessions never use. Idempotent in data.js.
+      if (v === 'team') {
+        ensureTeamLoaded().then(() => renderPage());
+      }
+    },
     insTab: (el) => { setInsTab(el.dataset.v); renderPage(); try { window.scrollTo(0, 0); } catch { /* ignore */ } },
     insCat: (el) => { setInsCat(el.dataset.v); renderPage(); },
     insVerdict: (el) => { LV.insights ||= { tab: 'all', q: '', sort: { key: 'revenue', dir: 'desc' }, sel: new Set(), f: {} }; LV.insights.tab = el.dataset.v; setInsTab('products'); renderPage(); },
@@ -523,6 +646,41 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     // side effects on reservation / label / invoice. Handy when the
     // Razorpay webhook gets stuck, a COD outcome needs updating by the
     // dispatch team, or a refund is reconciled offline. For the full
+    // GST-05: persist the customer's GSTIN + billing details on the order.
+    // Any field can be blank — a blank GSTIN flips the invoice back to B2C.
+    // GSTIN format is validated client-side so a typo is caught before the
+    // save (15 chars: 2-digit state + 10-char PAN + 1-char entity +
+    // "Z" default + 1 checksum). Mixed case is allowed in the input but
+    // uppercased before persist to match the GSTN registry.
+    saveOrderGst: async (el) => {
+      const id = el.dataset.id;
+      const o = ORD[id];
+      if (!o) return;
+      const gstinEl = document.getElementById('of-billingGstin');
+      const nameEl = document.getElementById('of-billingName');
+      const addrEl = document.getElementById('of-billingAddress');
+      if (!gstinEl) return;
+      const billingGstin = String(gstinEl.value || '').trim().toUpperCase();
+      const billingName = String(nameEl?.value || '').trim();
+      const billingAddress = String(addrEl?.value || '').trim();
+      if (billingGstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9][A-Z][0-9A-Z]$/.test(billingGstin)) {
+        return toast('GSTIN format is invalid. Expected 15 characters: 29ABCDE1234F1Z5.');
+      }
+      if (billingGstin && !billingName) {
+        return toast('Business name is required when a GSTIN is set — it prints on the tax invoice.');
+      }
+      o.billingGstin = billingGstin;
+      o.billingName = billingName;
+      o.billingAddress = billingAddress;
+      toast(billingGstin ? 'GST details saved — tax invoice will print as a B2B invoice.' : 'GST details cleared — tax invoice will print as a B2C invoice.');
+      try {
+        await api.orders.update(id, { billingGstin, billingName, billingAddress });
+        rerender();
+      } catch (err) {
+        toast(`Could not save GST details: ${err.message}`);
+      }
+    },
+
     // "I collected the payment now cut a label" flow, use
     // `markPaymentReceived` instead.
     changePaymentStatus: async (el) => {
@@ -704,7 +862,7 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
 
       const c = CUST[d.cid];
       const pin = d.pin || (c.pinPrefix ? `${c.pinPrefix}00` : '');
-      const weight = d.items.reduce((a, it) => a + (CAT[PROD[it.pid].cat]?.weight || 0) * Number(it.qty), 0) + (SETTINGS.ship?.packaging || 120);
+      const weight = d.items.reduce((a, it) => a + (CAT[PROD[it.pid]?.cat]?.weight || 0) * Number(it.qty), 0) + (SETTINGS.ship?.packaging || 120);
       const slab = `${Math.ceil(weight / 500) * 0.5} kg`;
       const rate = 60 + Math.ceil(weight / 500) * 38;
 
@@ -1460,6 +1618,146 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     signOutDevice: (el) => { SETTINGS.account.devices.splice(Number(el.dataset.i), 1); renderPage(); toast('Signed out on that device.'); },
     testConnection: (el) => toast(`${el.dataset.id} responded. The connection is working.`),
 
+    /* ---------- Team (Settings → Team) ---------- */
+    // Invite a new admin user. Owner is prompted for email, name, role
+    // and an initial password, which they share with the invitee
+    // out-of-band. The backend hashes the password and starts the user
+    // as enabled. Only owners can hit this endpoint; non-owners get a
+    // 403 from the server.
+    inviteTeamMember: async () => {
+      const v = await ask({
+        title: 'Invite a team member',
+        ok: 'Send invite',
+        fields: [
+          { id: 'email', label: 'Email', required: true, placeholder: 'name@example.com' },
+          { id: 'name', label: 'Full name', placeholder: 'Priya Natarajan' },
+          { id: 'role', label: 'Role', type: 'select', options: [
+            ['owner', 'Owner — full access'],
+            ['manager', 'Manager — everything except user management'],
+            ['packer', 'Packer — packing bench + barcodes only'],
+            ['support', 'Support — orders, returns and reviews only'],
+          ] },
+          { id: 'password', label: 'Initial password', required: true, hint: 'At least 8 characters. Share it with them separately; they can change it from Settings → Admin login.' },
+        ],
+      });
+      if (!v) return;
+      const email = String(v.email || '').trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast('That email doesn’t look valid.');
+      if (!v.password || v.password.length < 8) return toast('Password must be at least 8 characters.');
+      try {
+        await api.team.invite({ email, name: v.name || '', role: v.role || 'manager', password: v.password });
+        await refreshTeam();
+        renderPage();
+        toast(`${email} invited. Share the password with them to sign in.`);
+      } catch (err) {
+        toast(`Could not invite: ${err.message}`);
+      }
+    },
+
+    // Edit name + role of an existing member. Email is immutable on purpose
+    // (would break login + the audit trail); to change it, delete and
+    // re-invite. Backend refuses to demote the last active owner.
+    editTeamMember: async (el) => {
+      const id = el.dataset.id;
+      const u = team.find((x) => (x.id || x._id) === id);
+      if (!u) return;
+      const v = await ask({
+        title: `Edit ${u.email}`,
+        ok: 'Save',
+        fields: [
+          { id: 'name', label: 'Full name', value: u.name || '' },
+          { id: 'role', label: 'Role', type: 'select', options: [
+            ['owner', 'Owner'],
+            ['manager', 'Manager'],
+            ['packer', 'Packer'],
+            ['support', 'Support'],
+          ] },
+        ],
+      });
+      if (!v) return;
+      try {
+        await api.team.update(id, { name: v.name || '', role: v.role });
+        await refreshTeam();
+        renderPage();
+        toast('Saved.');
+      } catch (err) {
+        toast(`Could not save: ${err.message}`);
+      }
+    },
+
+    // Enable or disable (soft-ban). On disable the backend also bumps
+    // tokenInvalidBefore so the user is kicked out of every existing tab.
+    toggleTeamDisabled: async (el) => {
+      const id = el.dataset.id;
+      const wantDisable = el.dataset.disabled !== '1';
+      const u = team.find((x) => (x.id || x._id) === id);
+      if (!u) return;
+      const ok = await ask({
+        title: wantDisable ? `Disable ${u.email}?` : `Enable ${u.email}?`,
+        text: wantDisable
+          ? 'They can’t sign in and their existing session ends immediately. You can re-enable later.'
+          : 'They can sign in again with their existing password.',
+        ok: wantDisable ? 'Disable' : 'Enable',
+        danger: wantDisable,
+      });
+      if (!ok) return;
+      try {
+        await api.team.update(id, { disabled: wantDisable });
+        await refreshTeam();
+        renderPage();
+        toast(wantDisable ? 'Disabled.' : 'Enabled.');
+      } catch (err) {
+        toast(`Could not update: ${err.message}`);
+      }
+    },
+
+    // Force-set a new password. Logs the user out of every session.
+    resetTeamPassword: async (el) => {
+      const id = el.dataset.id;
+      const u = team.find((x) => (x.id || x._id) === id);
+      if (!u) return;
+      const v = await ask({
+        title: `Reset password for ${u.email}`,
+        text: 'Share the new password with them separately. All their existing sessions end immediately.',
+        ok: 'Reset password',
+        danger: true,
+        fields: [
+          { id: 'password', label: 'New password', required: true, hint: 'At least 8 characters.' },
+        ],
+      });
+      if (!v) return;
+      if (!v.password || v.password.length < 8) return toast('Password must be at least 8 characters.');
+      try {
+        await api.team.resetPassword(id, v.password);
+        toast('Password reset. Share it with them.');
+      } catch (err) {
+        toast(`Could not reset: ${err.message}`);
+      }
+    },
+
+    // Hard delete. Backend refuses to delete the last active owner or the
+    // currently signed-in user.
+    deleteTeamMember: async (el) => {
+      const id = el.dataset.id;
+      const u = team.find((x) => (x.id || x._id) === id);
+      if (!u) return;
+      const ok = await ask({
+        title: `Delete ${u.email}?`,
+        text: 'This removes their admin account entirely. Audit rows stamped with their name stay, but they can’t sign in again. Can’t be undone.',
+        ok: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await api.team.remove(id);
+        await refreshTeam();
+        renderPage();
+        toast(`${u.email} removed.`);
+      } catch (err) {
+        toast(`Could not delete: ${err.message}`);
+      }
+    },
+
     /* ---------- Barcodes & Stock ---------- */
     bcTab: (el) => {
       const v = el.dataset.v;
@@ -1482,6 +1780,16 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     // backend/src/colours.js, so admins only type the name.
     bulkAddProductsTemplate: () => {
       const sampleCat = categories[0]?.name || 'Mysore Silk';
+      // Dropdown options for each non-free-text column. Pulled from the
+      // live admin data where possible so a weaver or category added via
+      // the admin last week shows up as a choice immediately. Free-text
+      // columns (name, selling_price, mrp, qty, sku) deliberately don't
+      // appear here — those stay editable.
+      const categoryOptions = categories.map((c) => c.name).filter(Boolean).sort();
+      const weaveOptions = [...new Set(products.map((p) => p.weave).filter(Boolean))].sort();
+      const occasionOptions = (OCCASIONS_FULL.length ? OCCASIONS_FULL.map((o) => o.name) : OCCASIONS).filter(Boolean).sort();
+      const colourOptions = COLORS.map(([n]) => n).filter(Boolean).sort();
+      const statusOptions = ['Active', 'Draft', 'Hidden'];
       downloadXLSX('products-template.xlsx', [
         ['name', 'category', 'selling_price', 'mrp', 'qty', 'weave', 'occasions', 'colour', 'sku', 'status'],
         // Single-colour example — colour and qty are plain values.
@@ -1494,7 +1802,15 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
         // so this row creates 2 variants with 250 pieces each.
         ['Ivory Banarasi with gold pallu', 'Banarasi', '28000', '32000', '250', 'Banarasi', 'Bridal', 'Ivory|Lavender', '', 'Active'],
         ['', '', '', '', '', '', '', '', '', ''],
-      ]);
+      ], {
+        validations: {
+          1: { label: 'category',  options: categoryOptions },
+          5: { label: 'weave',     options: weaveOptions },
+          6: { label: 'occasions', options: occasionOptions },
+          7: { label: 'colour',    options: colourOptions },
+          9: { label: 'status',    options: statusOptions },
+        },
+      });
     },
 
     // Opens the bulk-add-products dialog — CSV drop zone, parsed preview,

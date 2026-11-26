@@ -58,7 +58,11 @@ export function orderDrawer(id) {
       // orders can still fall back to the Razorpay check if the webhook
       // is late, which is why both buttons are shown.
       ['markPaymentReceived', 'Mark payment received', 'btn-pri'],
-      ['checkPayment', 'Check with Razorpay', 'btn-sec'],
+      // Only show the Razorpay check when the customer actually reached
+      // the gateway (rzpOrderId is set by /payment/order). Without it
+      // there's nothing to query and the button just surfaces a 409
+      // every time.
+      ...(o.payment?.rzpOrderId ? [['checkPayment', 'Check with Razorpay', 'btn-sec']] : []),
     ],
     'Label generated': [['printLabel', 'Print label', 'btn-sec'], ['markDelivered', 'Mark delivered', 'btn-pri']],
     'In transit': [['markDelivered', 'Mark delivered', 'btn-pri']],
@@ -78,13 +82,24 @@ export function orderDrawer(id) {
       }).join('')}</ul></div>
       <div class="grid g2">
         <div class="d-sec"><h3>Payment</h3><dl class="sum"><dt>Subtotal</dt><dd>${inr(o.sub)}</dd>${o.discount ? `<dt>Coupon ${esc(o.coupon)}</dt><dd>− ${inr(o.discount)}</dd>` : ''}<dt>Shipping</dt><dd>${o.shipping ? inr(o.shipping) : 'Free'}</dd><dt class="tot">Total, incl. GST</dt><dd class="tot">${inr(o.total)}</dd></dl>
-          <p class="sub" style="margin-top:8px">${esc(o.payment.method)}${o.payment.rzp ? `, Razorpay ${esc(o.payment.rzp)}` : ''}. Status ${esc(o.payment.status.toLowerCase())}, as reported by Razorpay.</p></div>
+          <p class="sub" style="margin-top:8px">${esc(o.payment.method)}${o.payment.rzp ? `, Razorpay ${esc(o.payment.rzp)}` : ''}. Status ${esc(o.payment.status.toLowerCase())}${o.payment.rzpOrderId || o.payment.rzp ? ', as reported by Razorpay' : ''}.</p></div>
         <div class="d-sec"><h3>Customer <button type="button" class="link small" data-open="customer:${c.id}">View in CRM</button></h3>${who(c.name, `${c.orderCount} orders, ${inr(c.ltv)} spent`)}
           <dl class="kv" style="margin-top:10px"><dt>Phone</dt><dd>${esc(c.phone)}</dd><dt>Ship to</dt><dd>${esc(c.city)}, ${esc(c.state)} ${esc(o.ship.pin)}</dd><dt>Segment</dt><dd>${seg(c.segment)}</dd></dl></div>
       </div>
       <div class="d-sec"><h3>GST <span class="small faint">Place of supply ${esc(g.place)}</span></h3>
         <dl class="sum"><dt>Taxable value</dt><dd>${inr(g.taxable)}</dd>${g.intra ? `<dt>CGST</dt><dd>${inr(g.tax / 2)}</dd><dt>SGST</dt><dd>${inr(g.tax / 2)}</dd>` : `<dt>IGST</dt><dd>${inr(g.tax)}</dd>`}</dl>
         <p class="sub" style="margin-top:8px">Rates come from each product’s GST field. Tax invoice ${esc(o.invoice || 'issued once payment clears')}${o.creditNote ? `; credit note ${esc(o.creditNote)} for the refund` : ''}.</p></div>
+      <div class="d-sec"><h3>Customer GSTIN <span class="small faint">Optional — for B2B invoices</span></h3>
+        <p class="sub" style="margin:0 0 10px">${o.billingGstin
+          ? 'Business invoice — GSTIN prints under "Billed to" on the tax invoice so the buyer can claim input credit.'
+          : 'Add the shopper’s GSTIN here if they asked for a business invoice (walk-in / phone orders where it wasn’t captured at checkout).'}</p>
+        <div class="form-grid">
+          <div class="field span2"><label for="of-billingGstin">GSTIN</label><input class="ctl" id="of-billingGstin" value="${esc(o.billingGstin || '')}" placeholder="15-char format, e.g. 29ABCDE1234F1Z5" maxlength="15"><span class="hint">Leave blank for B2C invoice.</span></div>
+          <div class="field span2"><label for="of-billingName">Business name</label><input class="ctl" id="of-billingName" value="${esc(o.billingName || '')}" placeholder="Registered business name"></div>
+          <div class="field span2"><label for="of-billingAddress">Billing address</label><textarea class="ctl" id="of-billingAddress" placeholder="Registered business address">${esc(o.billingAddress || '')}</textarea></div>
+        </div>
+        <div style="margin-top:10px"><button type="button" class="btn btn-sec btn-sm" data-act="saveOrderGst" data-id="${o.id}">Save GST details</button></div>
+      </div>
       <div class="d-sec"><h3>Shipping via Shiprocket</h3>
         <dl class="kv"><dt>Weight slab</dt><dd>${esc(o.ship.slab)} (${nf.format(o.ship.weight)} g packed)</dd><dt>Rate charged by Shiprocket</dt><dd>${inr(o.ship.rate)}</dd>${o.ship.awb ? `<dt>Courier</dt><dd>${esc(o.ship.courier)}, AWB ${o.ship.awb}</dd><dt>Estimated delivery</dt><dd>${fmtD(o.ship.etd)}, as reported by the courier</dd>` : `<dt>Pushed</dt><dd>${o.status === 'Payment pending' ? 'Not yet. Waiting for payment.' : '—'}</dd>`}</dl>
         ${events.length ? `<ol class="timeline" style="margin-top:12px">${events.map((e) => `<li class="${['NDR raised', 'RTO initiated'].includes(e.type) ? 'bad' : 'done'}">${esc(e.type)}${e.detail ? `: ${esc(e.detail)}` : ''}<span class="sub">${esc(dtF.format(new Date(e.at)))}</span></li>`).join('')}</ol>` : ''}</div>
@@ -738,7 +753,7 @@ export function insightDrawer(id) {
   if (!p) return;
   if (!x) return openDrawer(`${head(p.name, '')}<div class="d-body"><p class="empty"><strong>No data yet</strong>Insights start once the product is live and has visitors.</p></div>`);
   const [tone, advice] = VERDICT[x.verdict];
-  const same = insList.filter((y) => PROD[y.id].cat === p.cat); const catTime = same.length ? sumBy(same, 'avgTime') / same.length : x.avgTime;
+  const same = insList.filter((y) => PROD[y.id]?.cat === p.cat); const catTime = same.length ? sumBy(same, 'avgTime') / same.length : x.avgTime;
   const myCarts = abCarts.filter((a) => a.pids.includes(id)); const reach = myCarts.filter((a) => a.contactable && a.status === 'Not contacted');
   const funnelRows = (steps) => steps.map(([s, n], i) => `<div class="hbar"><span>${esc(s)}${i ? `<span class="sub">${(steps[i - 1][1] ? (n / steps[i - 1][1] * 100).toFixed(0) : 0)}% of the step before</span>` : ''}</span><div class="bar"><span style="width:${steps[0][1] ? (n / steps[0][1] * 100) : 0}%"></span></div><span class="strong">${nf.format(n)}</span></div>`).join('');
   openDrawer(`${head(p.name, `<div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">${pill(x.verdict, tone)}<span class="small muted">${esc(CAT[p.cat]?.name || 'Uncategorised')}, ${inr(p.price)}, last 30 days</span></div>`)}

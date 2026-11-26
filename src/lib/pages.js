@@ -9,7 +9,7 @@ import {
   reviews, journal, SCENES, PAGES_CMS, SETTINGS, analytics, CRM, STORE_STATE,
   featured, M_FIELDS, paid, codToCollect, inDays, queue, BORDERS, PRICE_RANGES,
   HERO_SLIDES, HOME_BANNERS,
-  pieces, moves, PIECE, PIECE_TONE, piecesOf, varRef,
+  pieces, moves, PIECE, PIECE_TONE, piecesOf, varRef, team,
 } from './data.js';
 import {
   ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, gstLines,
@@ -78,7 +78,7 @@ PAGES.dashboard = () => {
         <ul class="queue" style="margin-top:12px">${items.map(([n, t, d, href, tone]) => `<li><a href="${href}"><span class="count" style="background:${toneBg[tone]}">${n}</span><span class="what"><b>${esc(t)}</b><span>${esc(d)}</span></span><span class="go">Open</span></a></li>`).join('') || '<li class="empty"><strong>All clear</strong></li>'}</ul></section>
       <div class="grid" style="align-content:start">
         <section class="panel"><div class="panel-head"><h2 class="h2">Payments</h2><a class="link" href="/analytics">Analytics</a></div><div class="panel-body"><dl class="sum"><dt>Today</dt><dd class="strong">${inr(sum(0, 1))}</dd><dt>Last 7 days</dt><dd class="strong">${inr(sum(0, 7))}</dd><dt>Last 30 days</dt><dd class="strong">${inr(sum(0, 30))}</dd></dl></div></section>
-        <section class="panel"><div class="panel-head"><h2 class="h2">Sales by category, 30 days</h2></div><div class="panel-body">${hbars(categories.map((c) => ({ label: c.name, value: orders.filter((o) => paid(o) && inDays(o, 0, 30)).flatMap((o) => o.items).filter((it) => PROD[it.pid].cat === c.id).reduce((a, it) => a + it.price, 0) })).sort((a, b) => b.value - a.value), { fmt: inrS })}</div></section>
+        <section class="panel"><div class="panel-head"><h2 class="h2">Sales by category, 30 days</h2></div><div class="panel-body">${hbars(categories.map((c) => ({ label: c.name, value: orders.filter((o) => paid(o) && inDays(o, 0, 30)).flatMap((o) => o.items).filter((it) => PROD[it.pid]?.cat === c.id).reduce((a, it) => a + it.price, 0) })).sort((a, b) => b.value - a.value), { fmt: inrS })}</div></section>
       </div>
     </div>
     <section class="panel" style="margin-top:16px"><div class="panel-head"><div><h2 class="h2">Payments received, last ${chartSpan} days</h2><p>Hover a day to see the amount received.</p></div><div class="legend"><span><i style="background:#05380d"></i>Payments received</span></div></div>
@@ -630,7 +630,7 @@ PAGES.analytics = () => {
     <div class="grid g2">
       <section class="panel"><div class="panel-head"><div><h2 class="h2">From home to payment, 30 days</h2><p>Visitors reaching each step, and how many dropped off.</p></div></div>${analytics.connected ? `<div class="panel-body">
         ${analytics.funnel.map(([s, n], i) => `<div class="hbar"><span>${esc(s)}${i ? `<span class="sub">${Math.round(100 - pct(n, analytics.funnel[i - 1][1]))}% dropped off</span>` : ''}</span><div class="bar"><span style="width:${pct(n, f0)}%"></span></div><span class="strong">${nf.format(n)}</span></div>`).join('')}</div>` : notConnected}</section>
-      <section class="panel"><div class="panel-head"><h2 class="h2">Payments by category, 30 days</h2></div><div class="panel-body">${hbars(categories.map((c) => ({ label: c.name, value: orders.filter((o) => paid(o) && inDays(o, 0, 30)).flatMap((o) => o.items).filter((it) => PROD[it.pid].cat === c.id).reduce((a, it) => a + it.price, 0) })).sort((a, b) => b.value - a.value), { fmt: inrS })}</div></section>
+      <section class="panel"><div class="panel-head"><h2 class="h2">Payments by category, 30 days</h2></div><div class="panel-body">${hbars(categories.map((c) => ({ label: c.name, value: orders.filter((o) => paid(o) && inDays(o, 0, 30)).flatMap((o) => o.items).filter((it) => PROD[it.pid]?.cat === c.id).reduce((a, it) => a + it.price, 0) })).sort((a, b) => b.value - a.value), { fmt: inrS })}</div></section>
       <section class="panel"><div class="panel-head"><h2 class="h2">Payments by city, 30 days</h2></div><div class="panel-body">${hbars(byCity, { fmt: inrS })}</div></section>
       <section class="panel"><div class="panel-head"><h2 class="h2">Where visitors came from</h2></div>${analytics.connected ? `<div class="panel-body">${hbars(analytics.sources.map(([label, value]) => ({ label, value })), { fmt: (v) => `${v}%`, tone: 'zari' })}<p class="sub">Only where the browser reports it.</p></div>` : notConnected}</section>
       <section class="panel"><div class="panel-head"><div><h2 class="h2">Most viewed products</h2><p>What holds attention, 30 days.</p></div></div><div class="panel-body"><ul class="list">${topProducts.map((p) => `<li>${sw(p, 'sm')}<span class="grow">${esc(p.name)}<span class="sub">${(pct(p.carts, p.views)).toFixed(1)}% added to cart</span></span><span class="strong">${nf.format(p.views)}</span></li>`).join('')}</ul></div></section>
@@ -1188,7 +1188,7 @@ export function recordShipped(o, codes) {
 
 PAGES.settings = () => {
   const S_ = SETTINGS;
-  const tabs = [['store', 'Store details'], ['shipping', 'Shipping'], ['gst', 'GST and invoices'], ['returns', 'Returns policy'], ['account', 'Admin login']];
+  const tabs = [['store', 'Store details'], ['shipping', 'Shipping'], ['gst', 'GST and invoices'], ['returns', 'Returns policy'], ['account', 'Admin login'], ['team', 'Team']];
   const row = (t, d, ctl) => `<div class="setrow"><span><b>${t}</b><span>${d}</span></span>${ctl}</div>`;
   const swc = (id, on, l) => `<label class="switch"><input type="checkbox" id="${id}" ${on ? 'checked' : ''} aria-label="${esc(l)}"><span></span></label>`;
   const inp = (id, v, w = 120, l = '') => `<input class="ctl" id="${id}" style="width:${w}px" value="${esc(v)}" aria-label="${esc(l)}">`;
@@ -1218,8 +1218,60 @@ PAGES.settings = () => {
       <h3 class="h2" style="margin:18px 0 8px">Signed-in devices</h3><ul class="list">${S_.account.devices.map((d, i) => `<li><span class="grow"><b>${esc(d.name)}</b><span class="sub">${esc(d.where)}${i === 0 ? ', this device' : ''}</span></span>${i === 0 ? '' : `<button type="button" class="btn btn-ghost btn-sm" data-act="signOutDevice" data-i="${i}">Sign out</button>`}</li>`).join('')}</ul>`,
     integrations: `<div class="integr">${[['Razorpay', 'Payments, refunds and webhooks'], ['Shiprocket', 'Rates, labels, tracking, NDR and reverse pickup'], ['PostHog', 'Visitor behaviour and funnels'], ['Cloudinary', 'Product image optimisation and delivery']].map(([n, d]) => `<div><b>${esc(n)}</b><p class="small muted" style="margin:4px 0 10px">${esc(d)}</p>${pill('Connected', 'ok', true)} <button type="button" class="link small" data-act="testConnection" data-id="${esc(n)}">Test</button></div>`).join('')}</div>
       <p class="sub" style="margin-top:12px">Subscriptions to these services are billed by each provider directly.</p>`,
+    team: (() => {
+      // Admin roster. Rows populate lazily via ensureTeamLoaded() when the
+      // Team tab is opened — actions.js setTab hook triggers the fetch and
+      // re-renders. While loading, show a skeleton row rather than "no
+      // team members" (which is never actually true — at minimum the
+      // current admin exists).
+      const roleLabels = { owner: 'Owner', manager: 'Manager', packer: 'Packer', support: 'Support' };
+      const roleBlurbs = {
+        owner: 'Full access. Can manage team + Settings.',
+        manager: 'Everything except user management and dangerous destructives.',
+        packer: 'Packing bench and barcodes only.',
+        support: 'Orders read, returns, reviews.',
+      };
+      if (!team.length) {
+        return `<p class="small muted" style="margin:0 0 14px">Loading team…</p>
+          <ul class="list"><li><span class="grow"><div class="skeleton" style="width:60%;height:14px;background:var(--line);border-radius:3px"></div></span></li></ul>`;
+      }
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap">
+          <p class="small muted" style="margin:0">Invite other admins and set what they can do. Only owners can manage this list.</p>
+          <button type="button" class="btn btn-pri" data-act="inviteTeamMember">${icon('plus')}Invite member</button>
+        </div>
+        <div class="scroll" style="border:1px solid var(--line);border-radius:var(--r-md)"><table class="t" style="min-width:720px"><thead><tr>
+          <th><span>Name</span></th>
+          <th><span>Email</span></th>
+          <th><span>Role</span></th>
+          <th><span>Last sign-in</span></th>
+          <th><span>Status</span></th>
+          <th><span></span></th>
+        </tr></thead><tbody>
+          ${team.map((u) => {
+            const disabled = !!u.disabled;
+            const statusPill = disabled ? pill('Disabled', 'bad') : pill('Active', 'ok');
+            const last = u.lastLoginAt ? esc(fmtD(u.lastLoginAt)) : '<span class="faint">Never</span>';
+            return `<tr>
+              <td><b>${esc(u.name || '—')}</b></td>
+              <td>${esc(u.email)}</td>
+              <td>${esc(roleLabels[u.role] || u.role)}<span class="sub">${esc(roleBlurbs[u.role] || '')}</span></td>
+              <td>${last}</td>
+              <td>${statusPill}</td>
+              <td class="r" style="white-space:nowrap">
+                <button type="button" class="btn btn-ghost btn-sm" data-act="editTeamMember" data-id="${esc(u.id || u._id)}">Edit</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-act="resetTeamPassword" data-id="${esc(u.id || u._id)}">Reset password</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-act="toggleTeamDisabled" data-id="${esc(u.id || u._id)}" data-disabled="${disabled ? '1' : '0'}">${disabled ? 'Enable' : 'Disable'}</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-act="deleteTeamMember" data-id="${esc(u.id || u._id)}">Delete</button>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody></table></div>`;
+    })(),
   };
-  const saveable = !['integrations'].includes(setTab);
+  // Tabs that own their own persistence flows (per-row invite / edit /
+  // delete, external service toggles) hide the generic "Save changes"
+  // footer — they'd be misleading on those screens.
+  const saveable = !['integrations', 'team'].includes(setTab);
   return `<div class="page-head"><div><h1 class="h1">Settings</h1><p class="lede">Store-wide rules for payments, shipping, tax, returns and customer segments.</p></div></div>
     <div class="settings"><nav class="panel subnav" aria-label="Settings sections">${tabs.map(([id, l]) => `<button type="button" data-act="setTab" data-v="${id}" aria-current="${setTab === id}">${l}</button>`).join('')}</nav>
       <section class="panel"><div class="panel-head"><h2 class="h2">${tabs.find((t) => t[0] === setTab)[1]}</h2></div><div class="panel-body">${S[setTab]}<p class="note n-bad" id="set-error" role="alert" hidden style="margin-top:14px"></p></div>

@@ -48,11 +48,20 @@ export const variantOf = (it) => {
 export const seg = (s) => pill(s, SEG_TONE[s]);
 
 export function gstLines(o) {
-  const intra = CUST[o.cid].state === STORE_STATE;
-  const scale = o.total / o.sub;
-  const taxable = o.items.reduce((a, it) => a + ((it.price + (it.stitch ? it.stitch.price : 0)) * scale) / (1 + PROD[it.pid].gst / 100), 0);
+  // Null-safe: storefront orders can reference a customer the admin cache
+  // hasn't bootstrapped yet, and order items can point at products the
+  // admin has since deleted. Either one previously threw and killed the
+  // order drawer render — match the fallback pattern used by docInvoice.
+  const c = CUST[o.cid] || { state: '' };
+  const intra = c.state === STORE_STATE;
+  const scale = o.sub ? o.total / o.sub : 1;
+  const taxable = o.items.reduce((a, it) => {
+    const p = PROD[it.pid] || { gst: 0 };
+    const gross = (it.price + (it.stitch ? it.stitch.price : 0)) * scale;
+    return a + gross / (1 + (Number(p.gst) || 0) / 100);
+  }, 0);
   const tax = o.total - taxable;
-  return { intra, taxable, tax, place: CUST[o.cid].state };
+  return { intra, taxable, tax, place: c.state };
 }
 
 /* Charts */
