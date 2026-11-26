@@ -175,7 +175,7 @@ export function choosePalette(i, navigate) {
 // Async because ExcelJS writes to an ArrayBuffer via a promise; we still
 // trigger the browser download via a blob + anchor click. Callers can
 // fire-and-forget — the toast confirms once the file is saved.
-export async function downloadXLSX(name, rows, { validations } = {}) {
+export async function downloadXLSX(name, rows, { validations, numberFormats } = {}) {
   if (!rows?.length) return;
   try {
     const wb = new ExcelJS.Workbook();
@@ -207,6 +207,25 @@ export async function downloadXLSX(name, rows, { validations } = {}) {
       const maxLen = rows.reduce((m, r) => Math.max(m, String(r[c] ?? '').length), 0);
       ws.getColumn(c + 1).width = Math.min(Math.max(10, maxLen + 2), 40);
     });
+
+    // Per-column Excel number formats (e.g. '0.00' for money columns). Also
+    // coerces string-looking numbers in the supplied sample rows to actual
+    // numeric cells so Excel honours the format instead of treating them
+    // as text.
+    if (numberFormats) {
+      Object.entries(numberFormats).forEach(([colIdx, fmt]) => {
+        const col = Number(colIdx) + 1;
+        ws.getColumn(col).numFmt = fmt;
+        for (let r = 2; r <= rows.length; r += 1) {
+          const cell = ws.getCell(r, col);
+          const n = Number(cell.value);
+          if (cell.value !== '' && cell.value != null && Number.isFinite(n)) {
+            cell.value = n;
+            cell.numFmt = fmt;
+          }
+        }
+      });
+    }
 
     if (validations) {
       const validEntries = Object.entries(validations).filter(([, v]) => Array.isArray(v?.options) && v.options.length);
@@ -1793,14 +1812,14 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       downloadXLSX('products-template.xlsx', [
         ['name', 'category', 'selling_price', 'mrp', 'qty', 'weave', 'occasions', 'colour', 'sku', 'status'],
         // Single-colour example — colour and qty are plain values.
-        ['Peacock blue Mysore silk', sampleCat, '12500', '15000', '10', 'Mysore Silk', 'Festive|Everyday', 'Peacock', '', 'Active'],
+        ['Peacock blue Mysore silk', sampleCat, 12500, 15000, '10', 'Mysore Silk', 'Festive|Everyday', 'Peacock', '', 'Active'],
         // Multi-colour example — colour and qty are pipe-separated and
         // line up positionally: 3 variants, 500 pieces each. Hex/sku
         // follow the same convention when you want to override them.
-        ['Festive silk saree', sampleCat, '9500', '12000', '500|500|500', 'Mysore Silk', 'Festive|Everyday', 'Peacock|Purple|Green', '', 'Active'],
+        ['Festive silk saree', sampleCat, 9500, 12000, '500|500|500', 'Mysore Silk', 'Festive|Everyday', 'Peacock|Purple|Green', '', 'Active'],
         // Multi-colour with a single qty — repeated for every variant,
         // so this row creates 2 variants with 250 pieces each.
-        ['Ivory Banarasi with gold pallu', 'Banarasi', '28000', '32000', '250', 'Banarasi', 'Bridal', 'Ivory|Lavender', '', 'Active'],
+        ['Ivory Banarasi with gold pallu', 'Banarasi', 28000, 32000, '250', 'Banarasi', 'Bridal', 'Ivory|Lavender', '', 'Active'],
         ['', '', '', '', '', '', '', '', '', ''],
       ], {
         validations: {
@@ -1809,6 +1828,14 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
           6: { label: 'occasions', options: occasionOptions },
           7: { label: 'colour',    options: colourOptions },
           9: { label: 'status',    options: statusOptions },
+        },
+        // Money columns: render with two decimal places (e.g. 12500.00) so
+        // the admin sees a currency-shaped number and partial-rupee prices
+        // like 1499.50 survive a round-trip through Excel without being
+        // truncated to the integer.
+        numberFormats: {
+          2: '0.00', // selling_price
+          3: '0.00', // mrp
         },
       });
     },
@@ -1974,7 +2001,10 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
           // Required: name, category, selling_price (or legacy `price`),
           // colour, occasions.
           const hasPrice = header.indexOf('selling_price') >= 0 || header.indexOf('price') >= 0;
-          const need = ['name', 'category', 'colour', 'occasions'];
+          // `occasions` is no longer required — a product without any
+          // tagged occasion still shows up in search and category views,
+          // just not in occasion-scoped filters.
+          const need = ['name', 'category', 'colour'];
           const missingCols = need.filter((k) => header.indexOf(k) < 0);
           if (!hasPrice) missingCols.push('selling_price');
           if (missingCols.length) {
@@ -2023,7 +2053,6 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
             if (!Number.isFinite(selling_price) || selling_price <= 0) return { line, name, category, selling_price: priceRaw, colour: colourRaw, ok: false, error: 'selling_price must be a positive number' };
             if (mrp !== null && (!Number.isFinite(mrp) || mrp <= selling_price)) return { line, name, category, selling_price, mrp: mrpRaw, colour: colourRaw, ok: false, error: 'mrp must be greater than selling_price' };
             if (!colours.length) return { line, name, category, selling_price, colour: colourRaw, ok: false, error: 'colour is empty' };
-            if (!occasions.length) return { line, name, category, selling_price, colour: colourRaw, ok: false, error: 'occasions required (pipe-separated)' };
             const cat = byCat.get(category.toLowerCase());
             if (!cat) return { line, name, category, selling_price, colour: colourRaw, ok: false, error: `unknown category: ${category}` };
             return {
