@@ -116,6 +116,30 @@ function App() {
     setCurrentUser(null);
   }), []);
 
+  // SEC-06: cheap background auth probe so a session revoked from another
+  // device (Settings → Admin login → Sign out) boots THIS tab within a
+  // few seconds even if the user isn't clicking anything. /auth/me is tiny
+  // (one lean findById on the User doc) so a 5-second cadence is fine at
+  // admin scale. The api wrapper already fires onAuthExpired on a 401 — we
+  // just need something regularly in flight. Pauses while the tab is hidden
+  // to avoid burning traffic on inactive tabs, and re-checks immediately
+  // when the user tabs back in.
+  useEffect(() => {
+    if (!signedIn) return undefined;
+    const PROBE_MS = 5_000;
+    const probe = () => {
+      if (document.visibilityState !== 'visible') return;
+      api.auth.me().catch(() => { /* onAuthExpired already handles 401s */ });
+    };
+    const intervalId = setInterval(probe, PROBE_MS);
+    const onVis = () => { if (document.visibilityState === 'visible') probe(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [signedIn]);
+
   // SEC-05: once we know the signed-in role, bounce off any page the role
   // can't see. A packer with no dashboard permission would otherwise land
   // on the default 'dashboard' route and see an empty/broken screen; this
