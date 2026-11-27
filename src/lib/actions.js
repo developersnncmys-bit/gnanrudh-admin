@@ -10,7 +10,7 @@ import {
   bumpInv, bumpCn, computeCRM, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS,
   pieces, PIECE, varRef, refresh, ensureMovementsLoaded,
   team, ensureTeamLoaded, refreshTeam,
-  rolePermissions, ensureRolePermissionsLoaded, refreshRolePermissions,
+  sessions, ensureSessionsLoaded, refreshSessions,
 } from './data.js';
 import { ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, LV, lvSelected } from './renderers.js';
 import {
@@ -29,7 +29,7 @@ import {
 import { bySku, findOrder, findPiece, beep } from './scanner.js';
 import { setInsTab, setInsCat, abCarts, AB } from './insights.js';
 import { api } from './api.js';
-import { setCurrentUser } from './permissions.js';
+import { setCurrentUser, PERMISSIONS, ROLE_PERMISSIONS } from './permissions.js';
 import { settingsReady } from './validators.js';
 import * as XLSX from 'xlsx-js-style';
 import ExcelJS from 'exceljs';
@@ -68,12 +68,38 @@ export function ask({ title, text = '', ok, danger, fields = [], preview, valida
   // after every field so showError can populate it without touching the DOM
   // structure. Sits between the control and the hint so the error reads as
   // a correction and the hint still explains the intent.
-  document.getElementById('dlgFields').innerHTML = fields.map((f) => `<div class="field" style="margin-top:14px"><label for="f-${f.id}">${esc(f.label)}</label>${f.type === 'color' ? colorHtml(f) : f.type === 'select' ? `<select class="ctl" id="f-${f.id}">${f.options.map((o) => `<option value="${esc(ov(o))}">${esc(ol(o))}</option>`).join('')}</select>` : f.type === 'area' ? `<textarea class="ctl" id="f-${f.id}" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>` : f.type === 'file' ? `<input type="file" class="ctl" id="f-${f.id}" accept="${esc(f.accept || 'image/*')}">` : f.type === 'date' ? `<input type="date" class="ctl" id="f-${f.id}" value="${esc(f.value || '')}"${f.min ? ` min="${esc(f.min)}"` : ''}${f.max ? ` max="${esc(f.max)}"` : ''}>` : `<input class="ctl" id="f-${f.id}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`}<span class="field-err" id="e-${f.id}" hidden></span>${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`).join('');
+  // Checkbox-group renderer. Each option is rendered as a label-wrapped
+  // <input type="checkbox">. The field's "value" is an array of ids
+  // ticked by the admin, collected in `vals()` below. `f.options` has
+  // the shape [[id, label, description?], ...]; `f.value` is the array
+  // of ids that should start ticked.
+  const checkboxesHtml = (f) => {
+    const picked = new Set(Array.isArray(f.value) ? f.value : []);
+    const opts = (f.options || []).map((o) => {
+      const [id, label, description] = Array.isArray(o) ? o : [o, o, ''];
+      const checked = picked.has(id);
+      return `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer" onmouseover="this.style.background='var(--tint)'" onmouseout="this.style.background='transparent'">
+        <input type="checkbox" data-group="f-${f.id}" value="${esc(id)}" ${checked ? 'checked' : ''} style="margin-top:2px">
+        <span style="display:flex;flex-direction:column;gap:2px">
+          <span style="font-weight:600;color:var(--ink)">${esc(label)}</span>
+          ${description ? `<span class="small muted">${esc(description)}</span>` : ''}
+        </span>
+      </label>`;
+    }).join('');
+    return `<div id="f-${f.id}" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:8px;border:1px solid var(--line);border-radius:var(--r-md);max-height:260px;overflow-y:auto">${opts}</div>`;
+  };
+
+  document.getElementById('dlgFields').innerHTML = fields.map((f) => `<div class="field" style="margin-top:14px"><label for="f-${f.id}">${esc(f.label)}</label>${f.type === 'color' ? colorHtml(f) : f.type === 'select' ? `<select class="ctl" id="f-${f.id}">${f.options.map((o) => `<option value="${esc(ov(o))}"${f.value !== undefined && String(f.value) === String(ov(o)) ? ' selected' : ''}>${esc(ol(o))}</option>`).join('')}</select>` : f.type === 'area' ? `<textarea class="ctl" id="f-${f.id}" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>` : f.type === 'file' ? `<input type="file" class="ctl" id="f-${f.id}" accept="${esc(f.accept || 'image/*')}">` : f.type === 'date' ? `<input type="date" class="ctl" id="f-${f.id}" value="${esc(f.value || '')}"${f.min ? ` min="${esc(f.min)}"` : ''}${f.max ? ` max="${esc(f.max)}"` : ''}>` : f.type === 'checkboxes' ? checkboxesHtml(f) : `<input class="ctl" id="f-${f.id}" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`}<span class="field-err" id="e-${f.id}" hidden></span>${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`).join('');
   // File fields return the picked File object (or null) instead of their
   // `.value` string — which is a bogus `C:\fakepath\…` path in browsers.
+  // Checkbox-group fields return an array of ticked option ids.
   const vals = () => Object.fromEntries(fields.map((f) => {
     const el = document.getElementById(`f-${f.id}`);
     if (f.type === 'file') return [f.id, el.files && el.files[0] ? el.files[0] : null];
+    if (f.type === 'checkboxes') {
+      const boxes = el ? el.querySelectorAll(`input[type="checkbox"][data-group="f-${f.id}"]`) : [];
+      return [f.id, [...boxes].filter((b) => b.checked).map((b) => b.value)];
+    }
     return [f.id, el.value];
   }));
   const showError = (fieldId, msg) => {
@@ -634,13 +660,10 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       // opened so the admin's boot sequence doesn't carry an extra
       // round-trip that most sessions never use. Idempotent in data.js.
       if (v === 'team') {
-        // Fetch both the roster and the live role→permission matrix in
-        // parallel — they power the same tab. Both are idempotent and
-        // Promise.all gives a single re-render once everything lands.
-        Promise.all([
-          ensureTeamLoaded(),
-          ensureRolePermissionsLoaded(),
-        ]).then(() => renderPage());
+        ensureTeamLoaded().then(() => renderPage());
+      }
+      if (v === 'account') {
+        ensureSessionsLoaded().then(() => renderPage());
       }
     },
     insTab: (el) => { setInsTab(el.dataset.v); renderPage(); try { window.scrollTo(0, 0); } catch { /* ignore */ } },
@@ -1748,7 +1771,18 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       out.innerHTML = `<p class="small muted" style="margin:0 0 6px">${esc(c.name)}, ${nf.format(w)} g packed, ${slab} kg slab, to ${pin}. Demo figures; the live store asks Shiprocket.</p><ul class="list">${rates.map(([n, r, d]) => `<li><span class="grow"><b>${n}</b><span class="sub">About ${d} days</span></span><span class="strong">${inr(r)}</span></li>`).join('')}</ul>`;
     },
     changePassword: async () => { const v = await ask({ title: 'Change password', ok: 'Change password', fields: [{ id: 'c', label: 'Current password', required: true }, { id: 'n', label: 'New password', required: true, hint: 'At least 10 characters' }, { id: 'r', label: 'New password again', required: true }] }); if (!v) return; if (v.n.length < 10) return toast('The new password needs at least 10 characters. It wasn’t changed.'); if (v.n !== v.r) return toast('The two new passwords don’t match. It wasn’t changed.'); SETTINGS.account.pwChanged = iso(TODAY); renderPage(); toast('Password changed. Other devices were signed out.'); SETTINGS.account.devices.splice(1); renderPage(); },
-    signOutDevice: (el) => { SETTINGS.account.devices.splice(Number(el.dataset.i), 1); renderPage(); toast('Signed out on that device.'); },
+    signOutDevice: async (el) => {
+      const sid = el.dataset.id;
+      if (!sid) return;
+      try {
+        await api.auth.revokeSession(sid);
+        await refreshSessions();
+        renderPage();
+        toast('Signed out on that device.');
+      } catch (err) {
+        toast(`Could not sign out: ${err.message}`);
+      }
+    },
     testConnection: (el) => toast(`${el.dataset.id} responded. The connection is working.`),
 
     /* ---------- Team (Settings → Team) ---------- */
@@ -1758,18 +1792,30 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     // as enabled. Only owners can hit this endpoint; non-owners get a
     // 403 from the server.
     inviteTeamMember: async () => {
+      // Permission catalogue → checkbox options. Each entry is
+      // [key, label, description] — label is the pretty module name
+      // (derived from the description's "Module — detail" split),
+      // description is the "detail" half shown under the label.
+      const permOptions = Object.entries(PERMISSIONS).map(([key, desc]) => {
+        const [label, detail] = String(desc).split(' — ');
+        return [key, label || key, detail || ''];
+      });
+      // Manager defaults — the sensible preset for a new teammate. The
+      // owner can still tick / untick individual modules before saving.
+      const managerDefaults = [...(ROLE_PERMISSIONS.manager || [])];
       const v = await ask({
         title: 'Invite a team member',
-        ok: 'Send invite',
+        ok: 'Add member',
         fields: [
           { id: 'email', label: 'Email', required: true, placeholder: 'name@example.com' },
           { id: 'name', label: 'Full name', placeholder: 'Priya Natarajan' },
           { id: 'role', label: 'Role', type: 'select', options: [
-            ['owner', 'Owner — full access'],
-            ['manager', 'Manager — everything except user management'],
-            ['packer', 'Packer — packing bench + barcodes only'],
-            ['support', 'Support — orders, returns and reviews only'],
+            ['owner', 'Owner — full access (overrides the permissions below)'],
+            ['manager', 'Manager'],
+            ['packer', 'Packer'],
+            ['support', 'Support'],
           ] },
+          { id: 'permissions', label: 'Modules this member can access', type: 'checkboxes', options: permOptions, value: managerDefaults, hint: 'Owners always have every permission — these ticks are ignored for the Owner role.' },
           { id: 'password', label: 'Initial password', required: true, hint: 'At least 8 characters. Share it with them separately; they can change it from Settings → Admin login.' },
         ],
       });
@@ -1778,7 +1824,13 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast('That email doesn’t look valid.');
       if (!v.password || v.password.length < 8) return toast('Password must be at least 8 characters.');
       try {
-        await api.team.invite({ email, name: v.name || '', role: v.role || 'manager', password: v.password });
+        await api.team.invite({
+          email,
+          name: v.name || '',
+          role: v.role || 'manager',
+          password: v.password,
+          permissions: Array.isArray(v.permissions) ? v.permissions : [],
+        });
         await refreshTeam();
         renderPage();
         toast(`${email} invited. Share the password with them to sign in.`);
@@ -1794,23 +1846,44 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const id = el.dataset.id;
       const u = team.find((x) => (x.id || x._id) === id);
       if (!u) return;
+      const permOptions = Object.entries(PERMISSIONS).map(([key, desc]) => {
+        const [label, detail] = String(desc).split(' — ');
+        return [key, label || key, detail || ''];
+      });
+      // Prefill from the user's stored per-user override if they have
+      // one, otherwise from their current role's defaults so the admin
+      // sees what the user actually has access to today.
+      const storedPerms = Array.isArray(u.permissions) && u.permissions.length
+        ? u.permissions
+        : [...(ROLE_PERMISSIONS[u.role] || [])];
       const v = await ask({
         title: `Edit ${u.email}`,
         ok: 'Save',
         fields: [
           { id: 'name', label: 'Full name', value: u.name || '' },
-          { id: 'role', label: 'Role', type: 'select', options: [
+          { id: 'role', label: 'Role', type: 'select', value: u.role || 'manager', options: [
             ['owner', 'Owner'],
             ['manager', 'Manager'],
             ['packer', 'Packer'],
             ['support', 'Support'],
           ] },
+          { id: 'permissions', label: 'Modules this member can access', type: 'checkboxes', options: permOptions, value: storedPerms, hint: 'Owners always have every permission — these ticks are ignored for the Owner role.' },
         ],
       });
       if (!v) return;
       try {
-        await api.team.update(id, { name: v.name || '', role: v.role });
+        await api.team.update(id, {
+          name: v.name || '',
+          role: v.role,
+          permissions: Array.isArray(v.permissions) ? v.permissions : [],
+        });
         await refreshTeam();
+        // If the owner just edited their OWN row, refetch /auth/me so the
+        // sidebar re-filters off the new permissions list without a reload.
+        try {
+          const me = await api.auth.me();
+          setCurrentUser(me);
+        } catch { /* non-fatal */ }
         renderPage();
         toast('Saved.');
       } catch (err) {
@@ -1891,39 +1964,6 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       }
     },
 
-    // SEC-05: owner-only. Collects the state of every .role-perm checkbox
-    // in the Settings > Team matrix and PUTs the resulting matrix to the
-    // backend. On success we refresh the live cache + the signed-in user's
-    // own permission list (if the owner just tweaked a role they belong to,
-    // the sidebar reflects it immediately) and re-render.
-    saveRolePermissions: async () => {
-      const boxes = document.querySelectorAll('input.role-perm');
-      if (!boxes.length) { toast('Nothing to save.'); return; }
-      const matrix = {};
-      boxes.forEach((b) => {
-        const role = b.dataset.role;
-        const perm = b.dataset.perm;
-        if (!role || !perm) return;
-        if (!matrix[role]) matrix[role] = [];
-        if (b.checked) matrix[role].push(perm);
-      });
-      try {
-        await api.team.saveRolePermissions(matrix);
-        // Re-fetch the live matrix so the next render reads whatever the
-        // backend normalised (owner forced to all, unknown keys stripped).
-        await refreshRolePermissions();
-        // The owner's own nav depends on their permissions list — refetch
-        // /auth/me so the sidebar can rerun its filter against fresh data.
-        try {
-          const me = await api.auth.me();
-          setCurrentUser(me);
-        } catch { /* non-fatal — their own row still had owner = all */ }
-        renderPage();
-        toast('Permissions saved.');
-      } catch (err) {
-        toast(`Could not save: ${err.message}`);
-      }
-    },
 
     /* ---------- Barcodes & Stock ---------- */
     bcTab: (el) => {

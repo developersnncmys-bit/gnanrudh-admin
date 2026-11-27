@@ -10,15 +10,13 @@ import {
   featured, M_FIELDS, paid, codToCollect, inDays, queue, BORDERS, PRICE_RANGES,
   HERO_SLIDES, HOME_BANNERS,
   pieces, moves, PIECE, PIECE_TONE, piecesOf, varRef, team,
-  rolePermissions,
+  sessions, sessionsState,
 } from './data.js';
 import {
   ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, gstLines,
   areaChart, hbars, listView, LV, lvSelected,
 } from './renderers.js';
-import {
-  PERMISSIONS as PERMISSIONS_STATIC, ROLE_PERMISSIONS, ROLE_LABELS, currentRoleName,
-} from './permissions.js';
+import { ROLE_LABELS } from './permissions.js';
 
 /* Page state kept on module (equivalent to closures in the original) */
 let dashRange = 7;
@@ -1342,8 +1340,7 @@ PAGES.settings = () => {
       ${row('Cash on delivery', 'Shown at checkout only for pincodes on your COD list.', swc('pm-cod', S_.pay.cod, 'Cash on delivery'))}
       ${row('COD pincodes', `${nf.format(S_.pay.codPins)} pincodes allowed${S_.pay.codFile ? `, from ${esc(S_.pay.codFile)}` : ''}. Upload a CSV or Excel export with one pincode per row to replace the list.`, '<label class="btn btn-sec btn-sm" for="pm-pins">Upload list</label><input type="file" id="pm-pins" accept=".csv,.txt" hidden>')}
       ${row('Maximum COD order value, ₹', 'Optional. Leave empty for no limit.', inp('pm-cap', S_.pay.codCap || '', 120, 'COD cap'))}`,
-    shipping: `${row('Shiprocket', 'Orders are pushed on payment success and a label is generated. Couriers are whatever Shiprocket offers on the day. Credentials are set by developers through backend environment variables.', pill('Configured in env', 'ok', true))}
-      <h3 class="h2" style="margin:18px 0 8px">Weight slabs</h3><p class="small muted" style="margin:0 0 10px">Rates at checkout use the packed weight, so a heavy silk and a light cotton are charged differently.</p>
+    shipping: `<h3 class="h2" style="margin:0 0 8px">Weight slabs</h3><p class="small muted" style="margin:0 0 10px">Rates at checkout use the packed weight, so a heavy silk and a light cotton are charged differently.</p>
       <div class="scroll" style="border:1px solid var(--line);border-radius:var(--r-md)"><table class="t"><thead><tr><th><span>Category</span></th><th class="r"><span>Default weight, grams</span></th></tr></thead><tbody>${categories.map((c) => `<tr><td>${esc(c.name)}</td><td class="r"><input class="ctl" style="width:90px;text-align:right" data-weight="${c.id}" value="${c.weight}" inputmode="numeric" aria-label="${esc(c.name)} weight"></td></tr>`).join('')}<tr><td>Packaging, added to every parcel</td><td class="r"><input class="ctl" id="sh-pack" style="width:90px;text-align:right" value="${S_.ship.packaging}" inputmode="numeric" aria-label="Packaging weight"></td></tr></tbody></table></div>
       ${row('Free shipping above, ₹', '', inp('sh-free', S_.ship.freeAbove, 110, 'Free shipping threshold'))}
       <h3 class="h2" style="margin:18px 0 8px">Check a rate</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><input class="ctl" style="width:140px" id="rate-pin" placeholder="6-digit pincode" inputmode="numeric" aria-label="Pincode"><select class="ctl" id="rate-cat" style="width:220px" aria-label="Category">${categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><button type="button" class="btn btn-sec" data-act="checkRate">Get rates</button></div><div id="rate-out" style="margin-top:12px"></div>`,
@@ -1357,7 +1354,16 @@ PAGES.settings = () => {
       ${row('VIP', 'Lifetime spend at or above, ₹', inp('crm-vip', CRM.vip, 130, 'VIP threshold'))}${row('Repeat', 'Number of orders at or above', inp('crm-rep', CRM.repeatOrders, 80, 'Repeat orders'))}${row('Dormant', 'No order for this many days', inp('crm-dorm', CRM.dormantDays, 90, 'Dormant days'))}${row('New', 'Everyone with one order who isn’t dormant', '')}
       <p class="sub">Right now: ${['VIP', 'Repeat', 'New', 'Dormant'].map((s) => `${customers.filter((c) => c.segment === s).length} ${s}`).join(', ')}.</p>`,
     account: `<div class="form-grid">${field('ac-email', 'Admin email', S_.account.email)}<div class="field"><span class="lbl">Password</span><button type="button" class="btn btn-sec" data-act="changePassword">Change password</button><span class="hint">Last changed ${esc(fmtD(S_.account.pwChanged))}</span></div></div>
-      <h3 class="h2" style="margin:18px 0 8px">Signed-in devices</h3><ul class="list">${S_.account.devices.map((d, i) => `<li><span class="grow"><b>${esc(d.name)}</b><span class="sub">${esc(d.where)}${i === 0 ? ', this device' : ''}</span></span>${i === 0 ? '' : `<button type="button" class="btn btn-ghost btn-sm" data-act="signOutDevice" data-i="${i}">Sign out</button>`}</li>`).join('')}</ul>`,
+      <h3 class="h2" style="margin:18px 0 8px">Signed-in devices</h3>
+      ${!sessionsState.loaded
+        ? '<p class="small muted" style="margin:0">Loading devices…</p>'
+        : sessions.length
+          ? `<ul class="list">${sessions.map((s) => {
+            const when = s.lastActiveAt ? `Last active ${dtF.format(new Date(s.lastActiveAt))}` : '';
+            const sub = s.current ? 'this device' : (when || 'last active unknown');
+            return `<li><span class="grow"><b>${esc(s.deviceLabel || 'Unknown device')}</b><span class="sub">${esc(sub)}</span></span>${s.current ? '<span class="pill p-ok">Current</span>' : `<button type="button" class="btn btn-ghost btn-sm" data-act="signOutDevice" data-id="${esc(s.id)}">Sign out</button>`}</li>`;
+          }).join('')}</ul>`
+          : `<p class="note n-info" style="margin:0">Your current sign-in was done before device tracking was added — it isn't recorded yet. <b>Sign out and sign in again</b> (top-right) to register this device. Any future sign-ins will show up here automatically.</p>`}`,
     integrations: `<div class="integr">${[['Razorpay', 'Payments, refunds and webhooks'], ['Shiprocket', 'Rates, labels, tracking, NDR and reverse pickup'], ['PostHog', 'Visitor behaviour and funnels'], ['Cloudinary', 'Product image optimisation and delivery']].map(([n, d]) => `<div><b>${esc(n)}</b><p class="small muted" style="margin:4px 0 10px">${esc(d)}</p>${pill('Connected', 'ok', true)} <button type="button" class="link small" data-act="testConnection" data-id="${esc(n)}">Test</button></div>`).join('')}</div>
       <p class="sub" style="margin-top:12px">Subscriptions to these services are billed by each provider directly.</p>`,
     team: (() => {
@@ -1381,59 +1387,14 @@ PAGES.settings = () => {
       // checkboxes + a Save button; everyone else sees a read-only ✓/—.
       //
       // The owner column is locked (owner always has every permission —
-      // enforced server-side in permissions.js normaliseMatrix) so a stray
-      // click can't lock the only owner out.
-      const livePerms = rolePermissions.permissions && Object.keys(rolePermissions.permissions).length
-        ? rolePermissions.permissions
-        : PERMISSIONS_STATIC;
-      const liveMatrix = rolePermissions.matrix && Object.keys(rolePermissions.matrix).length
-        ? rolePermissions.matrix
-        : ROLE_PERMISSIONS;
-      const permEntries = Object.entries(livePerms);
-      const matrixRoles = Object.keys(ROLE_PERMISSIONS);
-      const isOwner = currentRoleName() === 'owner';
-      const check = '<span aria-label="allowed" title="allowed" style="color:var(--ok)">✓</span>';
-      const dash = '<span aria-hidden="true" class="faint">—</span>';
-      const cell = (role, permKey) => {
-        const on = (liveMatrix[role] || []).includes(permKey);
-        // Owner column is always locked on + shown with a muted checkbox so
-        // the UI still looks consistent with the rest of the matrix.
-        const ownerLocked = role === 'owner';
-        if (!isOwner) return on ? check : dash;
-        return `<input type="checkbox" class="role-perm" data-role="${esc(role)}" data-perm="${esc(permKey)}" ${on ? 'checked' : ''} ${ownerLocked ? 'disabled title="Owner always has every permission"' : ''} aria-label="${esc(role)} can ${esc(permKey)}">`;
-      };
-      const matrixHtml = `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:24px 0 6px">
-          <h3 class="h2" style="margin:0">Access by role</h3>
-          ${isOwner ? `<button type="button" class="btn btn-pri btn-sm" data-act="saveRolePermissions">Save permissions</button>` : ''}
-        </div>
-        <p class="small muted" style="margin:0 0 12px">${isOwner
-          ? 'Tick a cell to grant that module to a role, untick to revoke. Owner always has every permission.'
-          : 'What each role can access. Only owners can edit this matrix.'}</p>
-        <div class="scroll" style="border:1px solid var(--line);border-radius:var(--r-md)">
-          <table class="t" style="min-width:720px">
-            <thead>
-              <tr>
-                <th style="min-width:220px"><span>Module</span></th>
-                ${matrixRoles.map((r) => `<th class="c"><span>${esc(roleLabels[r] || cap(r))}</span></th>`).join('')}
-              </tr>
-            </thead>
-            <tbody>
-              ${permEntries.map(([key, desc]) => `<tr>
-                <td><b>${esc(String(desc || key).split(' — ')[0])}</b><span class="sub">${esc(String(desc || '').split(' — ').slice(1).join(' — ') || key)}</span></td>
-                ${matrixRoles.map((r) => `<td class="c">${cell(r, key)}</td>`).join('')}
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>`;
-
+      // Per-user permissions now live inline on the Invite / Edit dialogs
+      // as a checkbox group — no more role-wide matrix on this tab.
       if (!team.length) {
         return `<p class="small muted" style="margin:0 0 14px">Loading team…</p>
-          <ul class="list"><li><span class="grow"><div class="skeleton" style="width:60%;height:14px;background:var(--line);border-radius:3px"></div></span></li></ul>
-          ${matrixHtml}`;
+          <ul class="list"><li><span class="grow"><div class="skeleton" style="width:60%;height:14px;background:var(--line);border-radius:3px"></div></span></li></ul>`;
       }
       return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap">
-          <p class="small muted" style="margin:0">Invite other admins and set what they can do. Only owners can manage this list.</p>
+          <p class="small muted" style="margin:0">Invite other admins and tick the modules they should access. Only owners can manage this list.</p>
           <button type="button" class="btn btn-pri" data-act="inviteTeamMember">${icon('plus')}Invite member</button>
         </div>
         <div class="scroll" style="border:1px solid var(--line);border-radius:var(--r-md)"><table class="t" style="min-width:720px"><thead><tr>
@@ -1462,8 +1423,7 @@ PAGES.settings = () => {
               </td>
             </tr>`;
           }).join('')}
-        </tbody></table></div>
-        ${matrixHtml}`;
+        </tbody></table></div>`;
     })(),
   };
   // Tabs that own their own persistence flows (per-row invite / edit /

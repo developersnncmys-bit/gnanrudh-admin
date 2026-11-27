@@ -400,6 +400,38 @@ export async function refreshTeam() {
   return ensureTeamLoaded();
 }
 
+// SEC-06: live admin login sessions for the signed-in user. Lazy-loaded
+// when Settings → Admin login is opened so the list reflects real
+// Session docs instead of the placeholder SETTINGS.account.devices.
+// `sessionsState.loaded` lets the render distinguish "still fetching"
+// (show a spinner) from "loaded but empty" (show the sign-in-again hint)
+// — without it an empty array looked identical to the loading state.
+export const sessions = [];
+export const sessionsState = { loaded: false };
+let sessionsLoadPromise = null;
+export function ensureSessionsLoaded() {
+  if (sessionsState.loaded) return Promise.resolve(sessions);
+  if (sessionsLoadPromise) return sessionsLoadPromise;
+  sessionsLoadPromise = api.auth.sessions()
+    .then((d) => {
+      refill(sessions, Array.isArray(d?.items) ? d.items : []);
+      sessionsState.loaded = true;
+      return sessions;
+    })
+    .catch((err) => {
+      console.warn('[data] sessions lazy-load failed:', err?.message || err);
+      sessionsLoadPromise = null;
+      return sessions;
+    });
+  return sessionsLoadPromise;
+}
+export async function refreshSessions() {
+  sessionsLoadPromise = null;
+  sessionsState.loaded = false;
+  refill(sessions, []);
+  return ensureSessionsLoaded();
+}
+
 // SEC-05: live role→permission matrix. Lazy-loaded alongside the team roster
 // so Settings → Team can render the editable permission table without a
 // bootstrap hit for admins who never open the tab.

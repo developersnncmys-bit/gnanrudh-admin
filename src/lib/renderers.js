@@ -12,11 +12,27 @@ export const RET_TONE = { Requested: 'warn', 'Not eligible': 'neutral', 'Pickup 
 // but an order/return/review still points at its id.
 const MISSING = { hex: '#cbc9d1', zariHex: '#eeedf1', name: 'Deleted product', cat: null };
 
+// A product has no real colour variants when either it has zero
+// variants OR its only variant has an empty colour name (the sentinel
+// written by the bulk-upload path for "qty without colour" products).
+// We render these as a plain neutral tile — no gradient, no swatch —
+// so the thumbnail doesn't imply a colour that isn't there.
+const hasNoColour = (p) => !p
+  || !Array.isArray(p.variants)
+  || p.variants.length === 0
+  || (p.variants.length === 1 && !p.variants[0]?.colour);
+const plainTile = (size = '') => `<span class="sw ${size}" style="background:#eceae4;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)" aria-hidden="true"></span>`;
+
 export const sw = (p, size = '') => {
+  if (hasNoColour(p)) return plainTile(size);
   const q = p || MISSING;
   return `<span class="sw ${size}" style="--b:${q.hex};--z:${q.zariHex}" aria-hidden="true"></span>`;
 };
 export const swv = (v, p, size = 'sm') => {
+  // Variant-level call. If the variant itself has no colour name
+  // (a no-colour product's sentinel variant) render the plain tile
+  // too — the thumbnail should match everywhere this product shows up.
+  if (v && !v.colour) return plainTile(size);
   const q = p || MISSING;
   const vv = v || { hex: q.hex, colour: '' };
   return `<span class="sw ${size}" style="--b:${vv.hex};--z:${q.zariHex}" title="${esc(vv.colour)}" aria-hidden="true"></span>`;

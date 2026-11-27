@@ -203,6 +203,11 @@ export const api = {
     login: (email, password) => post('/auth/login', { email, password }),
     me: () => get('/auth/me'),
     changePassword: (current, next) => post('/auth/password', { current, next }),
+    // SEC-06: per-device session management. Backend tracks one Session
+    // doc per login; the JWT carries its `sid` so revoking the Session
+    // row immediately invalidates that device's token.
+    sessions: () => get('/auth/sessions'),
+    revokeSession: (id) => del(`/auth/sessions/${encodeURIComponent(id)}`),
   },
 
   // Team management — only owners can mutate. Backend enforces the same.
@@ -214,14 +219,6 @@ export const api = {
     update: (id, patch) => request(`/team/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
     resetPassword: (id, password) => post(`/team/${encodeURIComponent(id)}/reset-password`, { password }),
     remove: (id) => del(`/team/${encodeURIComponent(id)}`),
-    // SEC-05: live role→permission matrix, used by Settings > Team to render
-    // the editable permissions table. Backend-sourced so an owner's edits
-    // reflect without a frontend rebuild.
-    rolePermissions: () => get('/team/role-permissions'),
-    // Owner-only: replace the full matrix. `matrix` is keyed by role, each
-    // value an array of permission keys. The backend normalises and force-
-    // sets owner = all before persisting.
-    saveRolePermissions: (matrix) => request('/team/role-permissions', { method: 'PUT', body: { matrix } }),
   },
 
   uploads: {
