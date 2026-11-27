@@ -757,7 +757,7 @@ export const getBcTab = () => bcTab;
 export const setLabelFmt = (v) => { labelFmt = v; };
 export const getLabelFmt = () => labelFmt;
 export const LABEL_FMT = {
-  thermal: ['Thermal roll, 75 × 50 mm', '@page { size: 75mm 50mm; margin: 0; }'],
+  thermal: ['Thermal roll, 50 × 25 mm', '@page { size: 50mm 25mm; margin: 0; }'],
   a4:      ['A4 sheet, 14 per page (99 × 38 mm)', '@page { size: A4; margin: 15.1mm 4.65mm 0; }'],
 };
 

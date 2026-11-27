@@ -2594,13 +2594,35 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       }
     },
 
-    printPiece: (el) => {
-      const code = el.dataset.id;
-      const u = PIECE[code]; if (!u) return;
-      const fmt = getLabelFmt();
-      openDoc(`Label ${code}`, `<style>${LABEL_FMT[fmt][1]}</style><div class="plabels ${fmt}">${labelHTML(u)}</div>`);
-      if (!u.printed) sync(api.pieces.printed(code).then(() => { u.printed = true; renderPage(); }), 'mark label printed');
-    },
+  printPiece: (el) => {
+  const code = el.dataset.id;
+  const u = PIECE[code];
+
+  if (!u) return;
+
+  openDoc(
+    `Label ${code}`,
+    `<style>
+      @page {
+        size: 50mm 25mm;
+        margin: 0;
+      }
+    </style>
+    <div class="plabels thermal">
+      ${labelHTML(u)}
+    </div>`
+  );
+
+  if (!u.printed) {
+    sync(
+      api.pieces.printed(code).then(() => {
+        u.printed = true;
+        renderPage();
+      }),
+      'mark label printed'
+    );
+  }
+},
 
     pieceRestock: async (el) => {
       const code = el.dataset.id;

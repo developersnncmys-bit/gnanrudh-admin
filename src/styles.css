@@ -732,3 +732,135 @@ table.heat { width: 100%; min-width: 640px; border-collapse: separate; border-sp
 .occ-sub-meta b { color: var(--pri); font-weight: 600; }
 .occ-sub-actions { grid-area: actions; display: flex; gap: 4px; flex-wrap: wrap; align-items: center; align-self: start; }
 .occ-sub-actions .btn-sm { height: 26px; padding: 0 8px; font-size: 11px; }
+
+
+.plabel.mini-label {
+  width: 50mm;
+  height: 25mm;
+  box-sizing: border-box;
+  padding: 1.5mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.7mm;
+  background: #fff;
+  color: #000;
+  font-family: Arial, sans-serif;
+}
+
+.mini-brand {
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  width: 100%;
+}
+
+.mini-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  width: 100%;
+  gap: 4px;
+}
+
+.mini-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 8px;
+  font-weight: 600;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.mini-mrp {
+  flex-shrink: 0;
+  font-size: 8px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-align: right;
+  margin: 0;
+}
+
+.mini-bc {
+  width: 100%;
+  margin: 0 auto;
+}
+
+.mini-bc svg {
+  display: block;
+  width: 100%;
+  height: 8mm;
+}
+
+.mini-code {
+  font-size: 8px;
+  text-align: center;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+@media print {
+
+  body:has(#docDlg[open] .plabels.thermal) {
+    width: 50mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  #docDlg:has(.plabels.thermal) {
+    position: static !important;
+    transform: none !important;
+    width: 50mm !important;
+    max-width: 50mm !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  #docDlg:has(.plabels.thermal) .doc-dlg-head,
+  #docDlg:has(.plabels.thermal) .dlg-foot {
+    display: none !important;
+  }
+
+  #docDlg:has(.plabels.thermal) #docBody {
+    width: 50mm !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .plabels.thermal {
+    display: block !important;
+    width: 50mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .thermal .plabel.mini-label {
+    width: 50mm !important;
+    height: 25mm !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    padding: 1.5mm !important;
+    border: none !important;
+    break-inside: avoid;
+    break-after: page;
+  }
+
+  .thermal .plabel.mini-label:last-child {
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
+}

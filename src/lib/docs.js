@@ -11,20 +11,29 @@ export function barcode(text) { return code128(text, 54); }
 
 /* Piece label (both thermal and A4 use the same markup; CSS switches layout). */
 export function labelHTML(u) {
-  const ref = varRef(u.vid); if (!ref) return '';
-  const { p, v } = ref; const S = SETTINGS.store;
-  const line1 = [p.weave, p.fabric && p.fabric !== '—' ? p.fabric : null, p.zari, p.border].filter(Boolean).join(', ');
-  const line2 = [v.colour, v.size ? `Size ${v.size}` : null, p.length, p.blousePiece ? 'With blouse piece' : null].filter(Boolean).join(', ');
-  return `<div class="plabel">
-    <div class="pl-top"><b>${esc(S.name)}</b><b>MRP ${inr(p.price)}</b></div>
-    <div class="pl-name">${esc(p.name)}</div>
-    <div class="pl-meta">${esc(line1)}<br>${esc(line2)}</div>
-   <div class="pl-bc" style="width:100%;max-width:280px;margin:0 auto;">
-  ${code128(u.code || u.id, 40)}
-</div>
-    <div class="pl-code">${esc(u.code || u.id)}</div>
-    <div class="pl-foot">MRP incl. of all taxes. Net qty 1 piece. Packed by ${esc(S.name)}, ${esc(S.address || '')}. ${esc(S.email || '')}</div>
-  </div>`;
+  const ref = varRef(u.vid);
+  if (!ref) return '';
+
+  const { p } = ref;
+  const S = SETTINGS.store;
+  const code = u.code || u.id;
+
+  return `
+    <div class="plabel mini-label">
+      <div class="mini-brand">
+        ${esc(S.name || 'House of GnanRudh')}
+      </div>
+
+      <div class="mini-row">
+        <div class="mini-name">${esc(p.name || '')}</div>
+        <div class="mini-mrp">MRP ${inr(p.price || 0)}</div>
+      </div>
+
+      <div class="mini-bc">${code128(code, 22)}</div>
+
+      <div class="mini-code">${esc(code)}</div>
+    </div>
+  `;
 }
 
 /* Amount-in-words for INR (Indian numbering: lakh, crore). */
