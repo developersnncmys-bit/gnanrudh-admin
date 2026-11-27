@@ -1197,20 +1197,27 @@ export const packCanInclude = (it, i) => {
   return !it.short;
 };
 
-// Button-enable rule. ≥1 included row, every included row is ship-able
-// (i.e. we have *some* code or a reserved piece for it), and every
-// stitched + included row has its "blouse in the box" tick.
+// Button-enable rule. ≥1 included row MUST have a scanned piece
+// (`pack.got[i]` set via the barcode scanner), every included row is
+// ship-able (i.e. we have some code or a reserved piece for it), and
+// every stitched + included row has its "blouse in the box" tick.
+//
+// The scan requirement — previously the button enabled as soon as the
+// admin ticked the "Ship" checkbox because pre-reserved pieces counted
+// as ready — stops the common mistake of marking an order shipped
+// without actually putting a piece in the box. Shipping via the scanner
+// is the physical act of packing; the button mirrors that.
 export const packReadyToShip = (o) => {
   if (!pack || !o) return false;
-  let any = false;
+  let anyScanned = false;
   for (let i = 0; i < o.items.length; i += 1) {
     if (!packIncluded(i)) continue;
     const it = o.items[i];
     if (!packCanInclude(it, i)) return false;
     if (it.stitch && !pack.ticks[i]) return false;
-    any = true;
+    if (pack.got[i]) anyScanned = true;
   }
-  return any;
+  return anyScanned;
 };
 
 // Piece codes to send to the ship endpoint. Prefer the scan, fall back
@@ -1252,7 +1259,10 @@ PAGES.packing = () => {
           const includedRows = o.items.reduce((n, _, i) => n + (packIncluded(i) ? 1 : 0), 0);
           const scannedCount = Object.keys(pack.got).length;
           const partial = includedRows > 0 && includedRows < o.items.length;
-          return `<div class="panel-head" style="padding-top:0"><div><h2 class="h2">Order ${esc(o.id)} <span class="faint">for</span> ${esc(CUST[o.cid].name)}</h2><p>${esc(CUST[o.cid].city)} ${esc(o.ship.pin || '')}. ${esc(o.ship.courier || '')}, AWB ${esc(o.ship.awb || '')}. ${o.promised ? `Ship by ${esc(fmtD(o.promised))}.` : ''}</p></div><span class="strong">${includedRows} of ${o.items.length} to ship<span class="sub">${scannedCount} scanned</span></span></div>
+          const inStore = String(o.source || '') !== 'Storefront';
+          return `<div class="panel-head" style="padding-top:0"><div><h2 class="h2">Order ${esc(o.id)} <span class="faint">for</span> ${esc(CUST[o.cid]?.name || 'Customer')}</h2><p>${inStore
+            ? `Source: ${esc(o.source || 'Manual entry')}. Handed over at the counter — no courier.`
+            : `${esc(CUST[o.cid]?.city || '')} ${esc(o.ship.pin || '')}. ${esc(o.ship.courier || '')}, AWB ${esc(o.ship.awb || '')}. ${o.promised ? `Ship by ${esc(fmtD(o.promised))}.` : ''}`}</p></div><span class="strong">${includedRows} of ${o.items.length} ${inStore ? 'to hand over' : 'to ship'}<span class="sub">${scannedCount} scanned</span></span></div>
           <div class="panel-body">${partial ? '<p class="note n-warn" style="margin:0 0 10px">Partial shipment — unticked items stay reserved on this order. Handle them from the order drawer (cancel line / refund) once the shipment leaves.</p>' : ''}<ul class="list pack-list">${o.items.map((it, i) => {
             const p = PROD[it.pid]; const v = variantOf(it); const got = pack.got[i];
             const include = packIncluded(i);
@@ -1270,12 +1280,14 @@ PAGES.packing = () => {
               <label class="small" style="display:flex;gap:6px;align-items:center" title="${esc(shipTitle)}"><input type="checkbox" data-act="packInclude" data-i="${i}" ${include ? 'checked' : ''} ${canInclude ? '' : 'disabled'}> Ship</label>
               ${got ? pill('Packed', 'info') : pill('To scan', 'neutral')}</li>`;
           }).join('')}</ul></div>
-          <div class="d-foot" style="border-radius:0 0 var(--r-lg) var(--r-lg)"><button type="button" class="btn btn-ghost" data-act="packSlip" data-id="${esc(o.id)}" style="margin-right:auto">Print packing slip</button><button type="button" class="btn btn-sec" data-act="packCancel">Cancel packing</button><button type="button" class="btn btn-pri" data-act="packShip" ${packReadyToShip(o) ? '' : 'disabled'}>${partial ? `Mark ${includedRows} as shipped` : 'Mark as shipped'}</button></div>`;
+          <div class="d-foot" style="border-radius:0 0 var(--r-lg) var(--r-lg)"><button type="button" class="btn btn-ghost" data-act="packSlip" data-id="${esc(o.id)}" style="margin-right:auto">Print packing slip</button><button type="button" class="btn btn-sec" data-act="packCancel">Cancel packing</button><button type="button" class="btn btn-pri" data-act="packShip" ${packReadyToShip(o) ? '' : 'disabled'}>${inStore
+            ? (partial ? `Hand over ${includedRows}` : 'Hand over to customer')
+            : (partial ? `Mark ${includedRows} as shipped` : 'Mark as shipped')}</button></div>`;
         })()
         : '<div class="panel-body"><p class="empty" style="padding:28px 0"><strong>Nothing on the bench</strong>Scan an order, or pick one from the list.</p></div>'}
       </section>
       <div class="grid" style="align-content:start">
-        ${panel('Ready to pack', 'Paid, label generated, oldest promise first.', ready.length ? `<ul class="list">${ready.slice(0, 12).map((x) => `<li><span class="grow"><b>${esc(x.id)}</b><span class="sub">${esc(CUST[x.cid].name)}, ${plural(x.items.length, 'piece')}. ${x.promised ? `Ship by ${esc(dmF.format(toDate(x.promised)))}` : ''}</span></span>${x.items.some((it) => it.short) ? pill('Short', 'bad') : ''}<button type="button" class="btn btn-sec btn-sm" data-act="packLoad" data-id="${esc(x.id)}">Pack</button></li>`).join('')}</ul>${ready.length > 12 ? `<p class="sub">And ${ready.length - 12} more.</p>` : ''}` : '<p class="muted" style="margin:0">Nothing waiting. Orders arrive here once paid and labelled.</p>')}
+        ${panel('Ready to pack', 'Paid, label generated, oldest promise first.', ready.length ? `<ul class="list">${ready.slice(0, 12).map((x) => `<li><span class="grow"><b>${esc(x.id)}</b><span class="sub">${esc(CUST[x.cid]?.name || 'Customer')}, ${plural(x.items.length, 'piece')}. ${x.promised ? `Ship by ${esc(dmF.format(toDate(x.promised)))}` : ''}</span></span>${x.items.some((it) => it.short) ? pill('Short', 'bad') : ''}<button type="button" class="btn btn-sec btn-sm" data-act="packLoad" data-id="${esc(x.id)}">Pack</button></li>`).join('')}</ul>${ready.length > 12 ? `<p class="sub">And ${ready.length - 12} more.</p>` : ''}` : '<p class="muted" style="margin:0">Nothing waiting. Orders arrive here once paid and labelled.</p>')}
         ${panel('Shipped this session', '', scanStats.shipped.length ? `<ul class="list">${scanStats.shipped.map((s) => `<li class="click" data-open="order:${esc(s.oid)}" style="cursor:pointer"><span class="grow"><b>${esc(s.oid)}</b><span class="sub">${plural(s.n, 'piece')}</span></span><span class="small muted">${esc(tF.format(new Date(s.at)))}</span></li>`).join('')}</ul>` : '<p class="muted" style="margin:0">Nothing yet.</p>')}
       </div>
     </div>`;
@@ -1283,21 +1295,24 @@ PAGES.packing = () => {
 
 /* Pack-scan logic. Called by the scanner module when the current route is /packing. */
 export function packStartScan(o) {
-  // Pre-seed got[] from pieces already Packed for this order. `include`
-  // defaults to true for every row that's ship-able (scanned OR
-  // pre-reserved OR has stock available) so the normal full-ship path
-  // is one click — the admin only touches checkboxes when holding a
-  // row back for a later shipment.
+  // Pre-seed got[] from pieces already Packed for this order (so a
+  // reopened session picks up its own prior scans) — but DO NOT pre-tick
+  // the Ship checkboxes. Rows start unticked so the admin has to
+  // explicitly confirm each one via scanning (auto-ticks the row) or by
+  // toggling the Ship checkbox when holding a pre-reserved piece.
+  // Partnered with the scan-gated Mark-as-shipped button, this makes it
+  // impossible to accidentally ship an order that was never physically
+  // touched at the packing bench.
   pack = { oid: o.id, got: {}, ticks: {}, include: {} };
   o.items.forEach((it, i) => {
     const u = it.piece && PIECE[it.piece];
     if (u && u.status === 'Packed' && u.oid === o.id) {
       pack.got[i] = u.code || u.id;
+      // A row that was already Packed in a previous session stays
+      // ticked when the admin reopens — otherwise their progress would
+      // silently reset on a page refresh.
+      pack.include[i] = true;
     }
-    // Tick anything that isn't flagged short on the order. Short rows
-    // stay unticked + disabled in the render so the admin can't ship a
-    // line we know has no stock.
-    if (!it.short) pack.include[i] = true;
   });
 }
 

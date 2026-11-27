@@ -256,13 +256,31 @@ export function computeCRM() {
 // ensureMovementsLoaded() the first time either entry point opens. See
 // actions.js `bcTab` and drawers.js `pieceDrawer`.
 export async function bootstrap() {
+  // Role-based access: the backend returns 403 for resources the signed-in
+  // role can't access (e.g. a packer hitting /api/categories). We swallow
+  // 403s per-call so a limited role still boots with the slices it can see —
+  // other errors (401, 5xx, network) still bubble up and surface the
+  // "Could not reach the API" page.
+  const skip403 = (fallback) => (err) => {
+    if (err?.status === 403) return fallback;
+    throw err;
+  };
   const [
     cats, prods, custs, ords, rets, ship, cpns, revs, jrnl, pgs, scns, feat, sett, occs, pricesList, pcs, slides, banners,
   ] = await Promise.all([
-    api.categories.list(), api.products.list(), api.customers.list(),
-    api.orders.list(), api.returns.list(), api.shipping.list(),
-    api.coupons.list(), api.reviews.list(), api.journal.list(),
-    api.pages.list(), api.scenes.list(), api.featured.get(), api.settings.get(),
+    api.categories.list().catch(skip403([])),
+    api.products.list().catch(skip403([])),
+    api.customers.list().catch(skip403([])),
+    api.orders.list().catch(skip403([])),
+    api.returns.list().catch(skip403([])),
+    api.shipping.list().catch(skip403([])),
+    api.coupons.list().catch(skip403([])),
+    api.reviews.list().catch(skip403([])),
+    api.journal.list().catch(skip403([])),
+    api.pages.list().catch(skip403([])),
+    api.scenes.list().catch(skip403([])),
+    api.featured.get().catch(skip403({ ids: [] })),
+    api.settings.get().catch(skip403({})),
     api.occasions.list().catch(() => []),
     api.priceRanges.list().catch(() => []),
     api.pieces.list().catch(() => []),

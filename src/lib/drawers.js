@@ -316,7 +316,20 @@ export function newOrderDrawer(mode) {
     el.onchange = el.oninput;
   };
   bindText('no-pin', 'pin');
-  bindText('no-src', 'source');
+  // Source drives the default order status: Walk-in means the customer is
+  // at the counter and the piece is about to be scanned at the packing
+  // bench, so the order needs to be "Label generated" to appear on the
+  // bench and accept scans. Other sources (Phone, WhatsApp, Instagram,
+  // Manual entry) keep the current status — they're often still awaiting
+  // payment confirmation, which the admin resolves before dispatch.
+  const srcEl = document.getElementById('no-src');
+  if (srcEl) srcEl.onchange = () => {
+    d.source = srcEl.value;
+    if (d.source === 'Walk-in' && d.status !== 'Label generated') {
+      d.status = 'Label generated';
+      newOrderDrawer('__redraw');
+    }
+  };
   bindText('no-status', 'status');
   bindText('no-coupon', 'coupon');
   bindText('no-discount', 'discount');
@@ -592,7 +605,25 @@ export function productDrawer(id) {
           return f('Badges', 'pf-badges', `<div id="pf-badges" style="display:flex;flex-wrap:wrap;gap:6px">${badgeStyles}${chips}</div>`, 'Ribbons shown on product cards and the PDP. Multiple allowed.', true);
         })()}
         </div></div>
-      <div class="d-sec"><h3>Colour variants and stock <button type="button" class="btn btn-sec btn-sm" data-act="addVariant">${icon('plus')}Add colour</button></h3>
+      ${(() => {
+        // "No-variant" product: a single variant with an empty colour name.
+        // Created by the bulk-import path when the CSV row had qty but no
+        // colour. We render a plain Stock section — no swatch, no Colour
+        // column, no "Add colour" button — so the admin sees the product
+        // as having stock without any variant row. They can still add real
+        // colour variants from the regular drawer (hidden here; appears
+        // once the first real colour is picked via the small link below).
+        const onlyBlankVariant = p.variants.length === 1 && !p.variants[0].colour;
+        if (onlyBlankVariant) {
+          const v = p.variants[0];
+          const liveStock = piecesOf(v.id, 'In stock').length;
+          return `<div class="d-sec"><h3>Stock</h3>
+            <p class="small muted" style="margin:-2px 0 10px">This product has no colour variants — stock is held against the product itself. Click <b>Add colour</b> to split it into colour variants instead.</p>
+            <div class="setrow"><span><b>In stock</b><span>${esc(v.sku || 'Assigned on save')}</span></span><span class="strong" style="margin-right:12px">${nf.format(liveStock)}</span><button type="button" class="btn btn-sec btn-sm" data-act="receiveStock" data-i="0">Receive stock</button></div>
+            <div style="margin-top:10px"><button type="button" class="btn btn-ghost btn-sm" data-act="addVariant">${icon('plus', 14)}Add colour variant</button></div>
+          </div>`;
+        }
+        return `<div class="d-sec"><h3>Colour variants and stock <button type="button" class="btn btn-sec btn-sm" data-act="addVariant">${icon('plus')}Add colour</button></h3>
         <p class="small muted" style="margin:-2px 0 10px">Stock is read-only here. Every piece is barcoded; add stock through <b>Receive stock</b> on each row. Images below each variant are shown on the storefront when that colour is picked.</p>
         <table class="t"><thead><tr><th><span style="padding-left:0">Colour</span></th>${c.sized ? '<th><span>Size</span></th>' : ''}<th><span>SKU</span></th><th class="r"><span>In stock</span></th><th></th></tr></thead><tbody>
         ${p.variants.map((v, i) => {
@@ -618,7 +649,8 @@ export function productDrawer(id) {
             </div>
           </td></tr>`;
           return `<tr><td style="padding-left:0"><span class="who">${swv(v, p)}<span>${esc(v.colour)}</span></span></td>${c.sized ? `<td>${esc(v.size || '—')}</td>` : ''}<td class="muted">${esc(v.sku || 'Assigned on save')}</td><td class="r">${stockCell}</td><td class="r" style="padding-right:0"><button type="button" class="btn btn-sec btn-sm" data-act="receiveStock" data-i="${i}" title="${v.sku ? 'Receive stock for ' + esc(v.colour) : 'Saves the product first, then opens the receive dialog'}">Receive stock</button>${p.variants.length > 1 ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="removeVariant" data-i="${i}" aria-label="Remove ${esc(v.colour)}">${icon('x', 14)}</button>` : ''}</td></tr>${imagesRow}`;
-        }).join('')}</tbody></table></div>
+        }).join('')}</tbody></table></div>`;
+      })()}
       ${c.saree ? `<div class="d-sec"><h3>Craft &amp; material</h3><div class="form-grid">
         ${f('Zari', 'pf-zari', sel('pf-zari', ['Pure zari', 'Tested zari', 'No zari'], p.zari || 'No zari'))}
         ${f('Blouse piece', 'pf-blouse', sel('pf-blouse', [['yes', 'Included, offer stitching'], ['no', 'Not included']], p.blousePiece ? 'yes' : 'no'), 'Stitching is offered at checkout only when included')}

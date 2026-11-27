@@ -144,7 +144,7 @@ export function renderPalette(q) {
   const s = q.trim().toLowerCase();
   const res = [];
   if (s) {
-    orders.filter((o) => `${o.id} ${CUST[o.cid].name} ${CUST[o.cid].phone} ${o.ship.awb || ''} ${o.payment.rzp || ''}`.toLowerCase().includes(s)).slice(0, 5).forEach((o) => res.push(['Orders', `order:${o.id}`, `<span class="grow"><b>${o.id}</b><span class="sub">${esc(CUST[o.cid].name)}, ${inr(o.total)}</span></span>${pill(o.status, ORDER_TONE[o.status])}`]));
+    orders.filter((o) => `${o.id} ${CUST[o.cid]?.name || ''} ${CUST[o.cid]?.phone || ''} ${o.ship.awb || ''} ${o.payment.rzp || ''}`.toLowerCase().includes(s)).slice(0, 5).forEach((o) => res.push(['Orders', `order:${o.id}`, `<span class="grow"><b>${o.id}</b><span class="sub">${esc(CUST[o.cid]?.name || 'Customer')}, ${inr(o.total)}</span></span>${pill(o.status, ORDER_TONE[o.status])}`]));
     products.filter((p) => `${p.name} ${p.weave} ${p.variants.map((v) => v.sku).join(' ')}`.toLowerCase().includes(s)).slice(0, 5).forEach((p) => res.push(['Products', `product:${p.id}`, `${sw(p, 'sm')}<span class="grow"><b>${esc(p.name)}</b><span class="sub">${esc(CAT[p.cat]?.name || 'Uncategorised')}, ${inr(p.price)}</span></span>`]));
     customers.filter((c) => `${c.name} ${c.phone} ${c.email} ${c.city}`.toLowerCase().includes(s)).slice(0, 5).forEach((c) => res.push(['Customers', `customer:${c.id}`, `<span class="avatar ${avc(c.name)}">${esc(initials(c.name))}</span><span class="grow"><b>${esc(c.name)}</b><span class="sub">${esc(c.city)}, ${c.orderCount} orders</span></span>${seg(c.segment)}`]));
   } else [['Go to', '/orders', '<span class="grow"><b>Open orders</b></span>'], ['Go to', '/returns', '<span class="grow"><b>Returns to review</b></span>'], ['Go to', '/insights', '<span class="grow"><b>Product insights</b></span>']].forEach((x) => res.push(x));
@@ -1023,6 +1023,14 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
         toast(`Order ${row.id} created.${invoiceMsg}`);
         renderPage();
         renderNav();
+        // Walk-in orders are packed right at the counter — hop straight to
+        // the Packing bench with the session pre-loaded so the staff's next
+        // action (scan the piece) ships it without any clicks.
+        if (row.source === 'Walk-in' && row.status === 'Label generated') {
+          packStartScan(row);
+          setPackFb('ok', `Packing ${row.id} for ${CUST[row.cid]?.name || 'this order'}. Scan ${plural(row.items.length, 'piece')}.`);
+          navigate('/packing');
+        }
       } catch (e) {
         fail(`Failed to create order: ${e.message}`);
       }
@@ -2204,6 +2212,16 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
             const colours = coloursParsed.length === 1 && coloursParsed[0].toLowerCase() === 'none'
               ? []
               : coloursParsed.filter((c) => c.toLowerCase() !== 'none');
+            // Mirror the backend: qty > 0 with no colour auto-creates one
+            // "no colour" variant (empty-string colour name) so the
+            // Piece docs have somewhere to attach. The product drawer
+            // detects this and renders a plain Stock row — no swatch,
+            // no Colour column, no variant label. Mutates `colours` in
+            // place so totalQty picks up the admin's typed stock.
+            const noColourProduct = !colours.length && qtys.some((q) => q > 0);
+            if (noColourProduct) {
+              colours.push('');
+            }
             const occasions = (r[col('occasions')] || '').split('|').map((s) => s.trim()).filter(Boolean);
             const weave = col('weave') >= 0 ? r[col('weave')] : '';
             const hex = col('hex') >= 0 ? (r[col('hex')] || '') : '';
@@ -2223,17 +2241,23 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
             if (mrp !== null && (!Number.isFinite(mrp) || mrp <= selling_price)) return { line, name, category, selling_price, mrp: mrpRaw, colour: colourRaw, ok: false, error: 'mrp must be greater than selling_price' };
             // colour no longer required — blank rows create a product
             // shell with no variants that the admin fills in later.
+            // When qty > 0 but no colour, the auto-named variant above
+            // (colours.push(name)) means `colours` is non-empty by now
+            // so `totalQty` reflects the admin's typed stock.
             const cat = byCat.get(category.toLowerCase());
             if (!cat) return { line, name, category, selling_price, colour: colourRaw, ok: false, error: `unknown category: ${category}` };
+            const namedColours = colours.filter(Boolean);
             return {
               line, name, category, selling_price, mrp,
               qty: totalQty, // for the preview summary
               qtys,          // raw per-variant numbers, sent to backend
               colours,       // parsed array, backend receives pipe-joined
-              // "None" in the preview cell when no colour was supplied —
-              // makes it obvious the row will land as a shell without
-              // any sellable variant.
-              colour: colours.length ? colours.join(', ') : 'None',
+              // Preview label: real colour names when supplied, "No
+              // variant" when we auto-pushed an empty-colour placeholder
+              // (qty > 0 + no colour), or "None" for a shell row.
+              colour: namedColours.length
+                ? namedColours.join(', ')
+                : (colours.length ? 'No variant' : 'None'),
               occasions, weave, hex, size, sku, status,
               catName: cat.name, ok: true,
             };
@@ -2563,7 +2587,7 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const o = ORD[el.dataset.id]; if (!o) return;
       if (o.status !== 'Label generated') return toast(`${o.id} is ${o.status.toLowerCase()}. Only labelled orders can be packed.`);
       packStartScan(o);
-      setPackFb('ok', `Packing ${o.id} for ${CUST[o.cid].name}. Scan ${plural(o.items.length, 'piece')}.`);
+      setPackFb('ok', `Packing ${o.id} for ${CUST[o.cid]?.name || 'this order'}. Scan ${plural(o.items.length, 'piece')}.`);
       navigate('/packing'); renderPage();
     },
 
@@ -2586,14 +2610,15 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       // order drawer.
       const codes = packIncludedCodes(o);
       const partial = codes.length < o.items.length;
+      const oInStore = String(o.source || '') !== 'Storefront';
       try {
         await api.pieces.shipOrder(o.id, codes);
         await api.orders.ship(o.id);
         recordShipped(o, codes);
         await refresh('pieces'); await refresh('orders'); await refresh('shipping'); await refresh('movements');
         toast(partial
-          ? `${o.id}: shipped ${codes.length} of ${o.items.length} items. Remaining items stay reserved on the order.`
-          : `${o.id} marked as shipped. Its pieces now show as sold in stock.`);
+          ? `${o.id}: ${oInStore ? 'handed over' : 'shipped'} ${codes.length} of ${o.items.length} items. Remaining items stay reserved on the order.`
+          : `${o.id} ${oInStore ? 'handed to the customer' : 'marked as shipped'}. Its pieces now show as sold in stock.`);
         beep(true);
         renderPage(); renderNav();
       } catch (err) { toast(`Failed to ship: ${err.message}`); }
@@ -2650,7 +2675,7 @@ export function handleScan(raw, { navigate, renderPage, renderNav, source }) {
 
   // Packing flow — step through the current order.
   const o = findOrder(code);
-  const pstate = getPack();
+  let pstate = getPack();
   if (o) {
     if (pstate && pstate.oid === o.id && code === (o.ship?.awb || '').toUpperCase()) {
       if (packDone(o)) {
@@ -2684,7 +2709,24 @@ export function handleScan(raw, { navigate, renderPage, renderNav, source }) {
     }
     if (!u) { setPackFb('bad', r ? `${r.p.name}, ${r.v.colour}: no piece left in stock.` : `${code} isn’t a piece, order, AWB or invoice this store knows.`); beep(false); scanStats.wrong += 1; renderPage?.(); return; }
   }
-  if (!pstate) { setPackFb('warn', `${u.code || u.id}. Scan an order to start packing.`); beep(false); renderPage?.(); return; }
+  if (!pstate) {
+    // Shortcut for the in-store counter flow: the staff created a
+    // Label-generated order moments ago, grabbed the physical piece and
+    // scanned it without first scanning the order barcode (or clicking
+    // Pack). If the piece fits an order waiting on the bench, auto-start
+    // packing on it and fall through into the normal piece processing.
+    // Prefer the order the piece is already reserved for; otherwise the
+    // oldest Label-generated order that needs this variant.
+    const candidates = orders.filter((x) =>
+      x.status === 'Label generated' && x.items.some((it) => it.vid === u.vid));
+    const target = (u.oid && candidates.find((x) => x.id === u.oid))
+      || candidates.sort((a, b) => (a.placed < b.placed ? -1 : 1))[0];
+    if (!target) { setPackFb('warn', `${u.code || u.id}. No Label-generated order needs this piece. Scan an order to start packing.`); beep(false); renderPage?.(); return; }
+    packStartScan(target);
+    pstate = getPack();
+    if (source !== 'pack') navigate('/packing');
+    setPackFb('ok', `Packing ${target.id} for ${CUST[target.cid]?.name || 'this order'}.`);
+  }
   const ord = ORD[pstate.oid];
   if (Object.values(pstate.got).includes(u.code || u.id)) { setPackFb('warn', `${u.code || u.id} is already scanned for this order.`); beep(false); renderPage?.(); return; }
   const idx = ord.items.findIndex((it, i) => it.vid === u.vid && !pstate.got[i]);
@@ -2702,9 +2744,10 @@ export function handleScan(raw, { navigate, renderPage, renderNav, source }) {
     if (!pstate.include) pstate.include = {};
     pstate.include[idx] = true; // newly scanned items default to "ship it"
     const n = Object.keys(pstate.got).length;
+    const ordInStore = String(ord.source || '') !== 'Storefront';
     setPackFb('ok', packDone(ord)
-      ? `${ord.items.length === 1 ? 'The piece is' : `All ${ord.items.length} pieces are`} in. Scan the courier label or press Mark as shipped.`
-      : `${n} of ${ord.items.length} scanned. Untick a row if you want to hold it back for a later shipment.`);
+      ? `${ord.items.length === 1 ? 'The piece is' : `All ${ord.items.length} pieces are`} in. ${ordInStore ? 'Press Hand over to customer.' : 'Scan the courier label or press Mark as shipped.'}`
+      : `${n} of ${ord.items.length} scanned. Untick a row if you want to hold it back for a later ${ordInStore ? 'hand-over' : 'shipment'}.`);
     beep(true);
     renderPage?.();
   })(), 'pack piece');

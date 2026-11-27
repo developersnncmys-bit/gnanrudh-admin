@@ -10,9 +10,9 @@ import { buildActions, openPalette, renderPalette, choosePalette, CHECK_ACTS, to
 import { installGlobalScanner } from './lib/scanner.js';
 import { LV } from './lib/renderers.js';
 import { debounce, esc, iso, TODAY, validateRequiredIn } from './lib/utils.js';
-import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS, bootstrap, refresh } from './lib/data.js';
+import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS, NAV, bootstrap, refresh } from './lib/data.js';
 import { api, auth, onAuthExpired } from './lib/api.js';
-import { setCurrentUser } from './lib/permissions.js';
+import { setCurrentUser, NAV_PERM, can } from './lib/permissions.js';
 import LoginPage from './components/LoginPage.jsx';
 
 // Parse the current URL into [page, entityRef]. Accepts both clean (/orders/GR123)
@@ -115,6 +115,21 @@ function App() {
     setMe(null);
     setCurrentUser(null);
   }), []);
+
+  // SEC-05: once we know the signed-in role, bounce off any page the role
+  // can't see. A packer with no dashboard permission would otherwise land
+  // on the default 'dashboard' route and see an empty/broken screen; this
+  // lands them on the first sidebar entry they're allowed into (Orders).
+  useEffect(() => {
+    if (!me) return;
+    const perm = NAV_PERM[route];
+    if (perm && !can(perm)) {
+      const firstAllowed = NAV
+        .flatMap(([, items]) => items.map(([id]) => id))
+        .find((id) => !NAV_PERM[id] || can(NAV_PERM[id]));
+      if (firstAllowed) navigate(firstAllowed);
+    }
+  }, [me, route, navigate]);
 
   // Live-data refresh on route change. The admin's local pieces/orders/
   // products arrays are populated once at bootstrap; without this, a

@@ -48,7 +48,9 @@ async function request(path, { method = 'GET', body, query } = {}) {
       // Settings field that failed `settingsReady`. Surface them so the toast is actionable.
       if (Array.isArray(j.issues) && j.issues.length) msg += ` — ${j.issues.join('; ')}`;
     } catch { /* non-JSON */ }
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
   if (res.status === 204) return null;
   const ct = res.headers.get('content-type') || '';
