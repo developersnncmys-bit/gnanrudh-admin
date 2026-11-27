@@ -59,7 +59,12 @@ export function docInvoice(o, credit = false) {
   // the invoice action, having no try/catch, failed silently — which is
   // what made the Tax invoice button look dead.
   const c = CUST[o.cid] || { name: 'Guest', state: '', city: '', phone: '', email: '' };
-  const intra = c.state === STORE_STATE;
+  // In-store sales (Manual entry, Phone, WhatsApp, Walk-in, Instagram) are
+  // transacted at our counter in STORE_STATE, so they are always
+  // intra-state regardless of where the customer later travels to.
+  const inStore = String(o.source || '') !== 'Storefront';
+  const intra = inStore || c.state === STORE_STATE;
+  const placeOfSupply = inStore ? STORE_STATE : (c.state || STORE_STATE);
   const scale = o.sub ? o.total / o.sub : 1;
   const no = credit ? o.creditNote : o.invoice;
   const title = credit ? 'Credit note' : 'Tax invoice';
@@ -153,7 +158,7 @@ export function docInvoice(o, credit = false) {
         <div><span class="inv-label">${credit ? 'Credit note date' : 'Invoice date'}</span><strong>${esc(fmtD(issuedOn))}</strong></div>
         <div><span class="inv-label">Order number</span><strong>${esc(o.id)}</strong></div>
         <div><span class="inv-label">Order date</span><strong>${esc(fmtD(o.placed))}</strong></div>
-        <div><span class="inv-label">Place of supply</span><strong>${esc(c.state)}</strong></div>
+        <div><span class="inv-label">Place of supply</span><strong>${esc(placeOfSupply)}</strong></div>
       </section>
 
       <section class="inv-parties">
@@ -169,17 +174,17 @@ export function docInvoice(o, credit = false) {
             : ''}
         </div>
         <div class="inv-card">
-          <h3>Shipped to</h3>
-          <p class="inv-name">${esc(c.name)}</p>
-          <p>${esc(c.city)}, ${esc(c.state)} ${esc(o.ship.pin || '')}</p>
-          <p>${esc(c.phone)}</p>
+          <h3>${inStore ? 'Collected at' : 'Shipped to'}</h3>
+          ${inStore
+            ? `<p class="inv-name">${esc(S.store.name)}</p><p>${esc(S.store.address || `Bengaluru, ${STORE_STATE}`).replace(/\n/g, '<br>')}</p>`
+            : `<p class="inv-name">${esc(c.name)}</p><p>${esc(c.city)}, ${esc(c.state)} ${esc(o.ship.pin || '')}</p><p>${esc(c.phone)}</p>`}
         </div>
         <div class="inv-card inv-supply">
           <h3>Supply details</h3>
           <dl>
             <dt>Supply type</dt><dd>${intra ? 'Intra-state (CGST + SGST)' : 'Inter-state (IGST)'}</dd>
             <dt>Reverse charge</dt><dd>No</dd>
-            <dt>Customer type</dt><dd>${o.billingGstin ? 'Registered (B2B)' : 'Unregistered'}</dd>
+            <dt>Customer type</dt><dd>${o.billingGstin ? 'Registered (B2B)' : (inStore ? 'Walk-in (B2C)' : 'Unregistered')}</dd>
           </dl>
         </div>
       </section>

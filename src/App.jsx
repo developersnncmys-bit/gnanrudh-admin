@@ -12,6 +12,7 @@ import { LV } from './lib/renderers.js';
 import { debounce, esc, iso, TODAY, validateRequiredIn } from './lib/utils.js';
 import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS, bootstrap, refresh } from './lib/data.js';
 import { api, auth, onAuthExpired } from './lib/api.js';
+import { setCurrentUser } from './lib/permissions.js';
 import LoginPage from './components/LoginPage.jsx';
 
 // Parse the current URL into [page, entityRef]. Accepts both clean (/orders/GR123)
@@ -92,16 +93,28 @@ function App() {
   // onAuthExpired handler already handles the sign-out; here we just clear
   // the stale profile if the fetch rejects for any other reason.
   useEffect(() => {
-    if (!signedIn) { setMe(null); return; }
+    if (!signedIn) { setMe(null); setCurrentUser(null); return; }
     let cancelled = false;
     api.auth.me()
-      .then((u) => { if (!cancelled) setMe(u); })
-      .catch(() => { if (!cancelled) setMe(null); });
+      .then((u) => {
+        if (cancelled) return;
+        setMe(u);
+        // SEC-05: stash the role + permissions for the Sidebar filter and
+        // every downstream `can(perm)` check. Set here (not inside setMe's
+        // state updater) because the sidebar renders from a module-level
+        // lookup — not React state.
+        setCurrentUser(u);
+      })
+      .catch(() => { if (!cancelled) { setMe(null); setCurrentUser(null); } });
     return () => { cancelled = true; };
   }, [signedIn]);
 
   // Any protected API call returning 401 flips us back to the login screen
-  useEffect(() => onAuthExpired(() => { setSignedIn(false); setMe(null); }), []);
+  useEffect(() => onAuthExpired(() => {
+    setSignedIn(false);
+    setMe(null);
+    setCurrentUser(null);
+  }), []);
 
   // Live-data refresh on route change. The admin's local pieces/orders/
   // products arrays are populated once at bootstrap; without this, a

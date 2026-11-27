@@ -212,6 +212,14 @@ export const api = {
     update: (id, patch) => request(`/team/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
     resetPassword: (id, password) => post(`/team/${encodeURIComponent(id)}/reset-password`, { password }),
     remove: (id) => del(`/team/${encodeURIComponent(id)}`),
+    // SEC-05: live role→permission matrix, used by Settings > Team to render
+    // the editable permissions table. Backend-sourced so an owner's edits
+    // reflect without a frontend rebuild.
+    rolePermissions: () => get('/team/role-permissions'),
+    // Owner-only: replace the full matrix. `matrix` is keyed by role, each
+    // value an array of permission keys. The backend normalises and force-
+    // sets owner = all before persisting.
+    saveRolePermissions: (matrix) => request('/team/role-permissions', { method: 'PUT', body: { matrix } }),
   },
 
   uploads: {
@@ -262,6 +270,7 @@ export const api = {
   customers: {
     list: () => list('/customers'),
     get: (id) => get(`/customers/${id}`),
+    create: (doc) => post('/customers', doc),
     update: (id, p) => patch(`/customers/${id}`, p),
     remove: (id) => del(`/customers/${id}`),
     addNote: (id, text, at) => post(`/customers/${id}/notes`, { text, at }),
@@ -287,6 +296,11 @@ export const api = {
     markDelivered: (id, at) => post(`/orders/${id}/delivered`, at ? { at } : {}),
     ndr: (id, body) => post(`/orders/${id}/ndr`, body),
     refund: (id, amount) => post(`/orders/${id}/refund`, { amount }),
+    // SHIP-02: admin-callable push + test. `shiprocketPush` awaits the
+    // push and returns the refreshed order so the drawer can rerender;
+    // `shiprocketTest` just verifies credentials work.
+    shiprocketPush: (id) => post(`/orders/${id}/shiprocket-push`),
+    shiprocketTest: () => post('/orders/shiprocket/test-connection'),
   },
   returns: {
     list: () => list('/returns'),

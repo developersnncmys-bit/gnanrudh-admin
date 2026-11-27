@@ -10,11 +10,15 @@ import {
   featured, M_FIELDS, paid, codToCollect, inDays, queue, BORDERS, PRICE_RANGES,
   HERO_SLIDES, HOME_BANNERS,
   pieces, moves, PIECE, PIECE_TONE, piecesOf, varRef, team,
+  rolePermissions,
 } from './data.js';
 import {
   ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, gstLines,
   areaChart, hbars, listView, LV, lvSelected,
 } from './renderers.js';
+import {
+  PERMISSIONS as PERMISSIONS_STATIC, ROLE_PERMISSIONS, ROLE_LABELS, currentRoleName,
+} from './permissions.js';
 
 /* Page state kept on module (equivalent to closures in the original) */
 let dashRange = 7;
@@ -205,12 +209,48 @@ PAGES.products = () => `<div class="page-head"><div><h1 class="h1">Products</h1>
   ${listView('products', {
     rows: products, noun: 'product', placeholder: 'Name, weave or SKU', minWidth: 1180, open: 'product',
     text: (p) => `${p.name} ${p.weave} ${p.variants.map((v) => `${v.sku} ${v.colour}`).join(' ')}`,
-    tabs: [{ id: 'all', label: 'All', filter: null }, ...categories.map((c) => ({ id: c.id, label: c.name, filter: (p) => p.cat === c.id })), { id: 'draft', label: 'Drafts', filter: (p) => p.status === 'Draft' }, { id: 'oos', label: 'Colour out of stock', filter: (p) => p.variants.some((v) => piecesOf(v.id, 'In stock').length === 0), hot: true }, { id: 'soldout', label: 'Sold out', filter: (p) => p.status === 'Active' && stockOf(p) === 0, hot: true, note: 'CAT-06: these are live on the store but have zero stock across every colour. The storefront shows them as sold out automatically.' }],
-    filters: [
-      { id: 'zari', label: 'Any zari', options: ['Pure zari', 'Tested zari', 'No zari'], test: (p, v) => p.zari === v },
-      { id: 'occ', label: 'All occasions', options: OCCASIONS, test: (p, v) => p.occasion === v },
-      { id: 'blouse', label: 'Blouse piece', options: [['y', 'Included'], ['n', 'Not included']], test: (p, v) => (v === 'y') === p.blousePiece },
+    // Hidden products are filtered OUT of every tab except the dedicated
+    // "Hidden" one. They stay in the DB (so the row the admin uploaded
+    // via Excel isn't lost) but don't clutter day-to-day listings. The
+    // Hidden tab is parked at the end so staff only reach it when they
+    // explicitly want to review / un-hide / delete archived products.
+    tabs: [
+      { id: 'all', label: 'All', filter: (p) => p.status !== 'Hidden' },
+      ...categories.map((c) => ({ id: c.id, label: c.name, filter: (p) => p.cat === c.id && p.status !== 'Hidden' })),
+      { id: 'draft', label: 'Drafts', filter: (p) => p.status === 'Draft' },
+      { id: 'oos', label: 'Colour out of stock', filter: (p) => p.status !== 'Hidden' && p.variants.some((v) => piecesOf(v.id, 'In stock').length === 0), hot: true },
+      { id: 'soldout', label: 'Sold out', filter: (p) => p.status === 'Active' && stockOf(p) === 0, hot: true, note: 'CAT-06: these are live on the store but have zero stock across every colour. The storefront shows them as sold out automatically.' },
+      { id: 'hidden', label: 'Hidden', filter: (p) => p.status === 'Hidden', note: 'Products archived with status Hidden — not shown on the storefront or any other tab. Un-hide from the product drawer to bring them back.' },
     ],
+    filters: (() => {
+      // Build the "Any colour" dropdown from the distinct colours across
+      // every variant. "None" is a synthetic entry at the top that picks
+      // products with zero variants (bulk-uploaded shells the admin
+      // hasn't finished yet) — matches the storefront's behaviour of
+      // treating those as not-yet-sellable.
+      const seen = new Map();
+      for (const p of products) {
+        for (const v of (p.variants || [])) {
+          const name = String(v.colour || '').trim();
+          if (!name) continue;
+          const key = name.toLowerCase();
+          if (!seen.has(key)) seen.set(key, name);
+        }
+      }
+      const colourOptions = [
+        ['__none', 'None (no variants)'],
+        ...[...seen.values()].sort((a, b) => a.localeCompare(b)).map((n) => [n.toLowerCase(), n]),
+      ];
+      return [
+        { id: 'zari', label: 'Any zari', options: ['Pure zari', 'Tested zari', 'No zari'], test: (p, v) => p.zari === v },
+        { id: 'occ', label: 'All occasions', options: OCCASIONS, test: (p, v) => p.occasion === v },
+        { id: 'colour', label: 'Any colour', options: colourOptions, test: (p, v) => {
+          if (v === '__none') return !p.variants || p.variants.every((x) => !String(x.colour || '').trim());
+          return (p.variants || []).some((x) => String(x.colour || '').trim().toLowerCase() === v);
+        } },
+        { id: 'blouse', label: 'Blouse piece', options: [['y', 'Included'], ['n', 'Not included']], test: (p, v) => (v === 'y') === p.blousePiece },
+      ];
+    })(),
     bulk: [['bulkStatus', 'Change status'], ['bulkFeature', 'Feature on homepage'], ['exportSelected', 'Export CSV']],
     // Freshest first. `created` is YYYY-MM-DD (day precision), so two
     // products added on the same day would tie and fall back to array
@@ -798,7 +838,11 @@ export function labelQueueFor(variantIds /* Set | null */) {
 }
 const BC_TABS = [['labels', 'Labels'], ['pieces', 'Pieces'], ['moves', 'Stock movements'], ['setup', 'Printer and scanner setup']];
 
-const varRows = () => products.flatMap((p) => p.variants.filter((v) => v.sku).map((v) => {
+// Same Hidden filter as inventoryRows — label printing + stock movements
+// only concern active/draft products. Hidden pieces still exist in the
+// Pieces + Movements collections (audit trail stays intact); they just
+// don't surface on the Barcodes & Stock dashboard rows.
+const varRows = () => products.filter((p) => p.status !== 'Hidden').flatMap((p) => p.variants.filter((v) => v.sku).map((v) => {
   const ps = piecesOf(v.id);
   return {
     id: v.id, p, v,
@@ -1032,7 +1076,11 @@ const varRefLocal = (vid) => {
 // matches what the Labels page uses for "In stock", so numbers never diverge.
 const LOW_STOCK = 2;
 
-const inventoryRows = () => products.flatMap((p) => p.variants.map((v) => {
+// Hidden products are skipped so the Inventory page only shows stock
+// that's part of the active / draft catalogue. Hidden rows are still in
+// the DB (manageable from Products → Hidden tab) but don't clutter the
+// stock-value / low-stock KPIs here.
+const inventoryRows = () => products.filter((p) => p.status !== 'Hidden').flatMap((p) => p.variants.map((v) => {
   const ps = piecesOf(v.id);
   const inStock = ps.filter((u) => u.status === 'In stock').length;
   const reserved = ps.filter((u) => ['Reserved', 'Packed'].includes(u.status)).length;
@@ -1127,6 +1175,57 @@ export const readyToPack = () => orders
 
 export const packDone = (o) => o.items.every((it, i) => pack?.got[i] && (!it.stitch || pack.ticks[i]));
 
+// Per-item "ship" selection. Scans auto-tick; the admin can also tick a
+// row without a scan (e.g. walk-in handed over without a barcode burst,
+// or legacy reserved pieces that don't need a re-scan to leave the
+// building). An item is eligible unless it's flagged short with no
+// piece reserved — in that case there's genuinely nothing to ship.
+export const packIncluded = (i) => {
+  if (!pack) return false;
+  return pack.include ? pack.include[i] === true : false;
+};
+
+// The row's ship-able status: has the admin got anything physically on
+// hand for this line? Scans count, so do pre-reservations (it.piece set
+// by the storefront reservation), and so does an unshort row (we trust
+// the admin to confirm they're putting an in-stock piece in the box).
+// `it.short` rows stay locked — the backend will reject a ship on them.
+export const packCanInclude = (it, i) => {
+  if (!pack) return false;
+  if (pack.got[i]) return true;
+  if (it.piece) return true;
+  return !it.short;
+};
+
+// Button-enable rule. ≥1 included row, every included row is ship-able
+// (i.e. we have *some* code or a reserved piece for it), and every
+// stitched + included row has its "blouse in the box" tick.
+export const packReadyToShip = (o) => {
+  if (!pack || !o) return false;
+  let any = false;
+  for (let i = 0; i < o.items.length; i += 1) {
+    if (!packIncluded(i)) continue;
+    const it = o.items[i];
+    if (!packCanInclude(it, i)) return false;
+    if (it.stitch && !pack.ticks[i]) return false;
+    any = true;
+  }
+  return any;
+};
+
+// Piece codes to send to the ship endpoint. Prefer the scan, fall back
+// to the pre-reserved piece. Ticked rows without either are dropped
+// here — the backend's /pieces/order/:oid/ship with an empty codes
+// array falls back to shipping whatever Reserved/Packed pieces exist
+// on the order, which covers the "admin ticked but didn't scan" case
+// when the storefront already reserved pieces for the order.
+export const packIncludedCodes = (o) => {
+  if (!pack || !o) return [];
+  return o.items
+    .map((it, i) => (packIncluded(i) ? (pack.got[i] || it.piece || null) : null))
+    .filter(Boolean);
+};
+
 PAGES.packing = () => {
   const ready = readyToPack();
   const o = pack && ORD[pack.oid];
@@ -1146,15 +1245,33 @@ PAGES.packing = () => {
       <section class="panel">
         <div class="scan-box"><span class="scan-ico" aria-hidden="true">${icon('barcode', 22)}</span><input class="ctl" id="scanIn" data-scan="pack" autocomplete="off" spellcheck="false" placeholder="Scan here: order, courier label or piece" aria-label="Scan box"></div>
         <div class="note ${fbTone} scan-fb" role="status">${esc(packFb.text)}</div>
-        ${o ? `<div class="panel-head" style="padding-top:0"><div><h2 class="h2">Order ${esc(o.id)} <span class="faint">for</span> ${esc(CUST[o.cid].name)}</h2><p>${esc(CUST[o.cid].city)} ${esc(o.ship.pin || '')}. ${esc(o.ship.courier || '')}, AWB ${esc(o.ship.awb || '')}. ${o.promised ? `Ship by ${esc(fmtD(o.promised))}.` : ''}</p></div><span class="strong">${Object.keys(pack.got).length} of ${o.items.length}</span></div>
-          <div class="panel-body"><ul class="list pack-list">${o.items.map((it, i) => {
+        ${o ? (() => {
+          // Count rows the admin has ticked (what we'll actually ship),
+          // separately from "how many pieces have been scanned" (the
+          // audit metric for the bench screen).
+          const includedRows = o.items.reduce((n, _, i) => n + (packIncluded(i) ? 1 : 0), 0);
+          const scannedCount = Object.keys(pack.got).length;
+          const partial = includedRows > 0 && includedRows < o.items.length;
+          return `<div class="panel-head" style="padding-top:0"><div><h2 class="h2">Order ${esc(o.id)} <span class="faint">for</span> ${esc(CUST[o.cid].name)}</h2><p>${esc(CUST[o.cid].city)} ${esc(o.ship.pin || '')}. ${esc(o.ship.courier || '')}, AWB ${esc(o.ship.awb || '')}. ${o.promised ? `Ship by ${esc(fmtD(o.promised))}.` : ''}</p></div><span class="strong">${includedRows} of ${o.items.length} to ship<span class="sub">${scannedCount} scanned</span></span></div>
+          <div class="panel-body">${partial ? '<p class="note n-warn" style="margin:0 0 10px">Partial shipment — unticked items stay reserved on this order. Handle them from the order drawer (cancel line / refund) once the shipment leaves.</p>' : ''}<ul class="list pack-list">${o.items.map((it, i) => {
             const p = PROD[it.pid]; const v = variantOf(it); const got = pack.got[i];
+            const include = packIncluded(i);
+            const canInclude = packCanInclude(it, i);
+            const shipTitle = !canInclude
+              ? 'No piece in stock for this line'
+              : got
+                ? 'Scanned — ticked to ship'
+                : it.piece
+                  ? 'Pre-reserved piece — tick to ship without scanning'
+                  : 'Any piece of this colour will be used — tick to ship without scanning';
             return `<li><span class="pack-state ${got ? 'done' : 'todo'}" aria-hidden="true">${got ? '✓' : i + 1}</span>${swv(v, p, '')}
               <span class="grow"><b>${esc(p?.name || 'Product removed')}</b><span class="sub">${esc(v?.colour || 'variant removed')}${v?.size ? `, size ${v.size}` : ''}. ${got ? `Scanned ${esc(got)}` : it.piece ? `Reserved piece ${esc(it.piece)}, or any piece of this colour in stock` : it.short ? '<span class="t-bad">No piece in stock</span>' : 'Any piece of this colour'}</span>
               ${it.stitch ? `<label class="small" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" data-act="packTick" data-i="${i}" ${pack.ticks[i] ? 'checked' : ''}> Stitched blouse for ${esc(it.stitch.profile)} is in the box</label>` : ''}</span>
+              <label class="small" style="display:flex;gap:6px;align-items:center" title="${esc(shipTitle)}"><input type="checkbox" data-act="packInclude" data-i="${i}" ${include ? 'checked' : ''} ${canInclude ? '' : 'disabled'}> Ship</label>
               ${got ? pill('Packed', 'info') : pill('To scan', 'neutral')}</li>`;
           }).join('')}</ul></div>
-          <div class="d-foot" style="border-radius:0 0 var(--r-lg) var(--r-lg)"><button type="button" class="btn btn-ghost" data-act="packSlip" data-id="${esc(o.id)}" style="margin-right:auto">Print packing slip</button><button type="button" class="btn btn-sec" data-act="packCancel">Cancel packing</button><button type="button" class="btn btn-pri" data-act="packShip" ${packDone(o) ? '' : 'disabled'}>Mark as shipped</button></div>`
+          <div class="d-foot" style="border-radius:0 0 var(--r-lg) var(--r-lg)"><button type="button" class="btn btn-ghost" data-act="packSlip" data-id="${esc(o.id)}" style="margin-right:auto">Print packing slip</button><button type="button" class="btn btn-sec" data-act="packCancel">Cancel packing</button><button type="button" class="btn btn-pri" data-act="packShip" ${packReadyToShip(o) ? '' : 'disabled'}>${partial ? `Mark ${includedRows} as shipped` : 'Mark as shipped'}</button></div>`;
+        })()
         : '<div class="panel-body"><p class="empty" style="padding:28px 0"><strong>Nothing on the bench</strong>Scan an order, or pick one from the list.</p></div>'}
       </section>
       <div class="grid" style="align-content:start">
@@ -1166,11 +1283,21 @@ PAGES.packing = () => {
 
 /* Pack-scan logic. Called by the scanner module when the current route is /packing. */
 export function packStartScan(o) {
-  // Pre-seed got[] from pieces already Packed for this order.
-  pack = { oid: o.id, got: {}, ticks: {} };
+  // Pre-seed got[] from pieces already Packed for this order. `include`
+  // defaults to true for every row that's ship-able (scanned OR
+  // pre-reserved OR has stock available) so the normal full-ship path
+  // is one click — the admin only touches checkboxes when holding a
+  // row back for a later shipment.
+  pack = { oid: o.id, got: {}, ticks: {}, include: {} };
   o.items.forEach((it, i) => {
     const u = it.piece && PIECE[it.piece];
-    if (u && u.status === 'Packed' && u.oid === o.id) pack.got[i] = u.code || u.id;
+    if (u && u.status === 'Packed' && u.oid === o.id) {
+      pack.got[i] = u.code || u.id;
+    }
+    // Tick anything that isn't flagged short on the order. Short rows
+    // stay unticked + disabled in the render so the admin can't ship a
+    // line we know has no stock.
+    if (!it.short) pack.include[i] = true;
   });
 }
 
@@ -1200,7 +1327,7 @@ PAGES.settings = () => {
       ${row('Cash on delivery', 'Shown at checkout only for pincodes on your COD list.', swc('pm-cod', S_.pay.cod, 'Cash on delivery'))}
       ${row('COD pincodes', `${nf.format(S_.pay.codPins)} pincodes allowed${S_.pay.codFile ? `, from ${esc(S_.pay.codFile)}` : ''}. Upload a CSV or Excel export with one pincode per row to replace the list.`, '<label class="btn btn-sec btn-sm" for="pm-pins">Upload list</label><input type="file" id="pm-pins" accept=".csv,.txt" hidden>')}
       ${row('Maximum COD order value, ₹', 'Optional. Leave empty for no limit.', inp('pm-cap', S_.pay.codCap || '', 120, 'COD cap'))}`,
-    shipping: `${row('Shiprocket', 'Orders are pushed on payment success and a label is generated. Couriers are whatever Shiprocket offers on the day.', pill('Connected', 'ok', true))}
+    shipping: `${row('Shiprocket', 'Orders are pushed on payment success and a label is generated. Couriers are whatever Shiprocket offers on the day. Credentials are set by developers through backend environment variables.', pill('Configured in env', 'ok', true))}
       <h3 class="h2" style="margin:18px 0 8px">Weight slabs</h3><p class="small muted" style="margin:0 0 10px">Rates at checkout use the packed weight, so a heavy silk and a light cotton are charged differently.</p>
       <div class="scroll" style="border:1px solid var(--line);border-radius:var(--r-md)"><table class="t"><thead><tr><th><span>Category</span></th><th class="r"><span>Default weight, grams</span></th></tr></thead><tbody>${categories.map((c) => `<tr><td>${esc(c.name)}</td><td class="r"><input class="ctl" style="width:90px;text-align:right" data-weight="${c.id}" value="${c.weight}" inputmode="numeric" aria-label="${esc(c.name)} weight"></td></tr>`).join('')}<tr><td>Packaging, added to every parcel</td><td class="r"><input class="ctl" id="sh-pack" style="width:90px;text-align:right" value="${S_.ship.packaging}" inputmode="numeric" aria-label="Packaging weight"></td></tr></tbody></table></div>
       ${row('Free shipping above, ₹', '', inp('sh-free', S_.ship.freeAbove, 110, 'Free shipping threshold'))}
@@ -1224,16 +1351,71 @@ PAGES.settings = () => {
       // re-renders. While loading, show a skeleton row rather than "no
       // team members" (which is never actually true — at minimum the
       // current admin exists).
-      const roleLabels = { owner: 'Owner', manager: 'Manager', packer: 'Packer', support: 'Support' };
+      const roleLabels = ROLE_LABELS;
       const roleBlurbs = {
         owner: 'Full access. Can manage team + Settings.',
         manager: 'Everything except user management and dangerous destructives.',
-        packer: 'Packing bench and barcodes only.',
-        support: 'Orders read, returns, reviews.',
+        packer: 'Packing bench, barcodes, inventory and product lookup.',
+        support: 'Orders, returns, reviews and the customer CRM.',
       };
+
+      // Permission matrix — live. The catalogue + current grants come from
+      // the backend (/team/role-permissions, cached in `rolePermissions`);
+      // the static import is a fallback for the window before the fetch
+      // resolves so the table isn't blank on first render. Owners get
+      // checkboxes + a Save button; everyone else sees a read-only ✓/—.
+      //
+      // The owner column is locked (owner always has every permission —
+      // enforced server-side in permissions.js normaliseMatrix) so a stray
+      // click can't lock the only owner out.
+      const livePerms = rolePermissions.permissions && Object.keys(rolePermissions.permissions).length
+        ? rolePermissions.permissions
+        : PERMISSIONS_STATIC;
+      const liveMatrix = rolePermissions.matrix && Object.keys(rolePermissions.matrix).length
+        ? rolePermissions.matrix
+        : ROLE_PERMISSIONS;
+      const permEntries = Object.entries(livePerms);
+      const matrixRoles = Object.keys(ROLE_PERMISSIONS);
+      const isOwner = currentRoleName() === 'owner';
+      const check = '<span aria-label="allowed" title="allowed" style="color:var(--ok)">✓</span>';
+      const dash = '<span aria-hidden="true" class="faint">—</span>';
+      const cell = (role, permKey) => {
+        const on = (liveMatrix[role] || []).includes(permKey);
+        // Owner column is always locked on + shown with a muted checkbox so
+        // the UI still looks consistent with the rest of the matrix.
+        const ownerLocked = role === 'owner';
+        if (!isOwner) return on ? check : dash;
+        return `<input type="checkbox" class="role-perm" data-role="${esc(role)}" data-perm="${esc(permKey)}" ${on ? 'checked' : ''} ${ownerLocked ? 'disabled title="Owner always has every permission"' : ''} aria-label="${esc(role)} can ${esc(permKey)}">`;
+      };
+      const matrixHtml = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:24px 0 6px">
+          <h3 class="h2" style="margin:0">Access by role</h3>
+          ${isOwner ? `<button type="button" class="btn btn-pri btn-sm" data-act="saveRolePermissions">Save permissions</button>` : ''}
+        </div>
+        <p class="small muted" style="margin:0 0 12px">${isOwner
+          ? 'Tick a cell to grant that module to a role, untick to revoke. Owner always has every permission.'
+          : 'What each role can access. Only owners can edit this matrix.'}</p>
+        <div class="scroll" style="border:1px solid var(--line);border-radius:var(--r-md)">
+          <table class="t" style="min-width:720px">
+            <thead>
+              <tr>
+                <th style="min-width:220px"><span>Module</span></th>
+                ${matrixRoles.map((r) => `<th class="c"><span>${esc(roleLabels[r] || cap(r))}</span></th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${permEntries.map(([key, desc]) => `<tr>
+                <td><b>${esc(String(desc || key).split(' — ')[0])}</b><span class="sub">${esc(String(desc || '').split(' — ').slice(1).join(' — ') || key)}</span></td>
+                ${matrixRoles.map((r) => `<td class="c">${cell(r, key)}</td>`).join('')}
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+
       if (!team.length) {
         return `<p class="small muted" style="margin:0 0 14px">Loading team…</p>
-          <ul class="list"><li><span class="grow"><div class="skeleton" style="width:60%;height:14px;background:var(--line);border-radius:3px"></div></span></li></ul>`;
+          <ul class="list"><li><span class="grow"><div class="skeleton" style="width:60%;height:14px;background:var(--line);border-radius:3px"></div></span></li></ul>
+          ${matrixHtml}`;
       }
       return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap">
           <p class="small muted" style="margin:0">Invite other admins and set what they can do. Only owners can manage this list.</p>
@@ -1265,7 +1447,8 @@ PAGES.settings = () => {
               </td>
             </tr>`;
           }).join('')}
-        </tbody></table></div>`;
+        </tbody></table></div>
+        ${matrixHtml}`;
     })(),
   };
   // Tabs that own their own persistence flows (per-row invite / edit /

@@ -1,9 +1,32 @@
 import React from 'react';
 import { NAV, SETTINGS, queue } from '../lib/data.js';
 import { icon } from '../lib/utils.js';
+import { NAV_PERM, can, currentRoleName } from '../lib/permissions.js';
+
+// SEC-05: hide nav entries the current role doesn't have permission for.
+// Groups whose items all get filtered out drop out entirely so the sidebar
+// doesn't leave a bare "Sales" header above nothing.
+//
+// Whitelist semantics: an entry without a NAV_PERM mapping is shown to
+// everyone (there are none today, but keeps future additions forgiving).
+// Before the /auth/me response lands currentRoleName() is null — render the
+// full nav in that window so the menu doesn't flash empty for a frame.
+function filterNavForRole(nav) {
+  if (!currentRoleName()) return nav;
+  return nav
+    .map(([group, items]) => {
+      const allowed = items.filter(([id]) => {
+        const perm = NAV_PERM[id];
+        return !perm || can(perm);
+      });
+      return [group, allowed];
+    })
+    .filter(([, items]) => items.length > 0);
+}
 
 export default function Sidebar({ route, open }) {
   const q = queue();
+  const visibleNav = filterNavForRole(NAV);
   return (
     <aside className={`side${open ? ' open' : ''}`} id="side" aria-label="Main navigation">
       <div className="brand">
@@ -19,7 +42,7 @@ export default function Sidebar({ route, open }) {
         </span>
       </div>
       <nav className="nav" id="nav">
-        {NAV.map(([group, items]) => (
+        {visibleNav.map(([group, items]) => (
           <div className="nav-group" key={group}>
             <div className="nav-title">{group}</div>
             {items.map(([id, label, ic, badge, hot]) => {

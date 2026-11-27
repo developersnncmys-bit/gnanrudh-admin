@@ -10,6 +10,7 @@ import {
   bumpInv, bumpCn, computeCRM, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS,
   pieces, PIECE, varRef, refresh, ensureMovementsLoaded,
   team, ensureTeamLoaded, refreshTeam,
+  rolePermissions, ensureRolePermissionsLoaded, refreshRolePermissions,
 } from './data.js';
 import { ORDER_TONE, PAY_TONE, RET_TONE, sw, swv, prodCell, variantOf, seg, LV, lvSelected } from './renderers.js';
 import {
@@ -22,11 +23,13 @@ import {
   setDashRange, setSetTab, getSetTab, setBcTab, setLabelFmt, getLabelFmt, LABEL_FMT,
   getLabelBatchSize, setLabelBatchSize, getLabelBatchIndex, setLabelBatchIndex,
   getLabelCopies, setLabelCopies, labelQueueFor,
-  getPack, setPackFb, packStartScan, packCancelLocal, recordShipped, packDone, scanStats,
+  getPack, setPackFb, packStartScan, packCancelLocal, recordShipped, packDone, packReadyToShip,
+  packIncludedCodes, scanStats,
 } from './pages.js';
 import { bySku, findOrder, findPiece, beep } from './scanner.js';
 import { setInsTab, setInsCat, abCarts, AB } from './insights.js';
 import { api } from './api.js';
+import { setCurrentUser } from './permissions.js';
 import { settingsReady } from './validators.js';
 import * as XLSX from 'xlsx-js-style';
 import ExcelJS from 'exceljs';
@@ -188,16 +191,24 @@ export async function downloadXLSX(name, rows, { validations, numberFormats } = 
     const headerRow = rows[0] || [];
     ws.addRows(rows);
 
-    // Header style: bold ink text, mild warm-grey fill, left-aligned.
+    // Header style: heavy bold + larger ink text on a warm-grey fill
+    // with a thin ink border on the bottom. Row height is bumped so the
+    // headers feel like a distinct section, not just a first data row.
     const headerStyle = {
-      font: { bold: true, color: { argb: 'FF1A1A1A' } },
-      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2EFEA' } },
-      alignment: { horizontal: 'left', vertical: 'middle' },
+      font: { name: 'Calibri', bold: true, size: 13, color: { argb: 'FF000000' } },
+      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E1D4' } },
+      alignment: { horizontal: 'left', vertical: 'middle', indent: 1 },
+      border: {
+        bottom: { style: 'medium', color: { argb: 'FF1A1A1A' } },
+      },
     };
-    ws.getRow(1).eachCell((cell) => {
+    const header1 = ws.getRow(1);
+    header1.height = 26;
+    header1.eachCell((cell) => {
       cell.font = headerStyle.font;
       cell.fill = headerStyle.fill;
       cell.alignment = headerStyle.alignment;
+      cell.border = headerStyle.border;
     });
 
     // Column widths — pick the longest value per column, clamped between
@@ -241,10 +252,13 @@ export async function downloadXLSX(name, rows, { validations, numberFormats } = 
         for (let r = 0; r < refMaxRows; r += 1) {
           refWs.addRow(validEntries.map(([, v]) => v.options[r] ?? ''));
         }
-        refWs.getRow(1).eachCell((cell) => {
+        const refHeader = refWs.getRow(1);
+        refHeader.height = 26;
+        refHeader.eachCell((cell) => {
           cell.font = headerStyle.font;
           cell.fill = headerStyle.fill;
           cell.alignment = headerStyle.alignment;
+          cell.border = headerStyle.border;
         });
         refHeaders.forEach((_, c) => {
           const maxLen = (c < refHeaders.length)
@@ -273,15 +287,37 @@ export async function downloadXLSX(name, rows, { validations, numberFormats } = 
             // The Reference sheet column at the matching index. Column
             // letters: validEntries index + 1 → Excel column letter.
             : `=Reference!$${excelColLetter(validEntries.findIndex(([ci]) => Number(ci) === col) + 1)}$2:$${excelColLetter(validEntries.findIndex(([ci]) => Number(ci) === col) + 1)}$${refMaxRows + 1}`;
+          // Multi-value columns (pipe-separated: colour, occasions) keep
+          // the convenience dropdown for picking common values but
+          // accept any typed entry silently — no warning popup. Clients
+          // can type a custom colour name ("Rust Orange", "Oyster") or
+          // pipe-separate for multi-colour without any friction.
+          // Single-value columns (category, status, weave) keep the
+          // default stop-level validation so typos get blocked outright.
+          const isMulti = Boolean(v.multi);
           for (let r = 2; r <= 1001; r += 1) {
-            ws.getCell(r, col + 1).dataValidation = {
+            const validation = {
               type: 'list',
               allowBlank: true,
               formulae: [formula1],
-              showErrorMessage: true,
+              // Multi-value: suppress the post-entry popup so custom
+              // entries flow through without a confirmation click.
+              // Single-value: keep the popup so typos are caught.
+              showErrorMessage: !isMulti,
+              errorStyle: 'stop',
               errorTitle: 'Not in the allowed list',
               error: `Pick a value from the Reference sheet for the "${v.label || 'this'}" column.`,
             };
+            // Soft input prompt on multi-value cells — a tooltip-style
+            // nudge that appears when the cell is selected, instead of
+            // a disruptive after-the-fact popup. Teaches the syntax
+            // once without blocking anything.
+            if (isMulti) {
+              validation.showInputMessage = true;
+              validation.promptTitle = 'Pick one or type your own';
+              validation.prompt = `Dropdown holds the common ${v.label || 'values'}, but you can type any custom value here. Separate multiple entries with a pipe — e.g. Peacock|Rust|Ivory.`;
+            }
+            ws.getCell(r, col + 1).dataValidation = validation;
           }
         });
       }
@@ -598,7 +634,13 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       // opened so the admin's boot sequence doesn't carry an extra
       // round-trip that most sessions never use. Idempotent in data.js.
       if (v === 'team') {
-        ensureTeamLoaded().then(() => renderPage());
+        // Fetch both the roster and the live role→permission matrix in
+        // parallel — they power the same tab. Both are idempotent and
+        // Promise.all gives a single re-render once everything lands.
+        Promise.all([
+          ensureTeamLoaded(),
+          ensureRolePermissionsLoaded(),
+        ]).then(() => renderPage());
       }
     },
     insTab: (el) => { setInsTab(el.dataset.v); renderPage(); try { window.scrollTo(0, 0); } catch { /* ignore */ } },
@@ -847,6 +889,13 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     rejectReturn: async (el) => { const v = await ask({ title: 'Reject return', text: 'She is told the reason by email.', ok: 'Reject', danger: true, fields: [{ id: 'r', label: 'Reason', type: 'area', required: true }] }); if (!v) return; const id = el.dataset.id; returns.find((x) => x.id === id).status = 'Rejected'; toast('Return rejected.'); returnDrawer(id); renderPage(); renderNav(); sync(api.returns.reject(id), 'reject return'); },
     syncNow: (el) => { const id = el.dataset.id; const s = shipLog.find((x) => x.id === id); if (s) s.webhook = 'Received'; toast('Latest status pulled from Shiprocket.'); renderPage(); renderNav(); sync(api.shipping.sync(id), 'sync shipping event'); },
     newOrder: () => { resetDraftO(); newOrderDrawer(); },
+    // Toggle between "existing customer" (dropdown) and "+ new customer"
+    // (inline name+phone inputs) in the New Order drawer.
+    orderCustMode: (el) => {
+      const d = getDraftO(); if (!d) return;
+      d.useNewCustomer = el.dataset.mode === 'new';
+      newOrderDrawer('__redraw');
+    },
     addOrderLine: () => {
       const d = getDraftO(); if (!d) return;
       const first = products.find((p) => p.status !== 'Hidden') || products[0];
@@ -863,6 +912,39 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const d = getDraftO(); if (!d) return;
       const err = document.getElementById('no-error');
       const fail = (msg) => { if (err) { err.textContent = msg; err.hidden = false; } toast(msg); };
+      // When the admin typed a new customer, create one first so the
+      // order can reference its id. Phone is validated here (optional
+      // but, if given, must be 10 digits) to catch typos before the
+      // backend rejects on optMobileValidator.
+      if (d.useNewCustomer) {
+        const name = String(d.newCustomer?.name || '').trim();
+        const phone = String(d.newCustomer?.phone || '').trim();
+        const city = String(d.newCustomer?.city || '').trim();
+        if (!name) return fail('Enter the customer name.');
+        if (phone && !/^\d{10}$/.test(phone)) return fail('Phone must be 10 digits, or leave it blank.');
+        // Stable, readable id: `W<timestamp-suffix>` ("W" for walk-in).
+        // Avoids collision with the storefront's CUST-ids and makes the
+        // manual-entry origin obvious in the CRM.
+        const newCid = `W${Date.now().toString().slice(-8)}`;
+        const newCust = {
+          _id: newCid,
+          name,
+          phone,
+          city,
+          source: d.source || 'Manual entry',
+          since: new Date().toISOString().slice(0, 10),
+        };
+        try {
+          const saved = await api.customers.create(newCust);
+          const row = { ...saved, id: saved._id || newCid, orders: [] };
+          customers.push(row);
+          CUST[row.id] = row;
+          d.cid = row.id;
+          d.useNewCustomer = false;
+        } catch (e) {
+          return fail(`Could not create customer: ${e.message}`);
+        }
+      }
       if (!d.cid || !CUST[d.cid]) return fail('Pick a customer first.');
       if (!d.items.length) return fail('Add at least one item.');
       for (let i = 0; i < d.items.length; i += 1) {
@@ -1626,6 +1708,30 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
     },
     savePage: (el) => { const p = PAGES_CMS[Number(el.dataset.i)]; p.body = val('pg-body'); p.updated = iso(TODAY); closeDrawer(); renderPage(); toast(`${p.name} saved.`); sync(api.pages.update(p.name, { name: p.name, desc: p.desc, body: p.body }), 'save page'); },
     saveSettings: () => saveSettings(rerender),
+
+    // SHIP-02: push (or re-push) an order to Shiprocket from the order
+    // drawer. Awaits the real call so the admin sees the live outcome;
+    // updates the local ORD cache with whatever the backend returned so
+    // the drawer rerenders with the new shipment ids / AWB / error.
+    shiprocketPush: async (el) => {
+      const id = el.dataset.id;
+      const o = ORD[id];
+      if (!o) return;
+      toast('Pushing to Shiprocket…');
+      try {
+        const res = await api.orders.shiprocketPush(id);
+        if (res?.order) Object.assign(o, res.order);
+        if (res?.partial) toast(`Order pushed, but one step failed: ${res?.err || 'see drawer for details'}.`);
+        else toast('Pushed to Shiprocket — AWB assigned and pickup scheduled.');
+        rerender();
+        orderDrawer(id);
+      } catch (err) {
+        toast(`Shiprocket push failed: ${err.message}`);
+        // Refresh so the backend's `pushError` lands on the drawer even
+        // when the call threw.
+        try { await refresh('orders'); rerender(); orderDrawer(id); } catch { /* ignore */ }
+      }
+    },
     checkRate: () => {
       const pin = val('rate-pin'); const out = document.getElementById('rate-out');
       if (!/^\d{6}$/.test(pin)) { out.innerHTML = '<p class="note n-bad">Enter a 6-digit pincode.</p>'; return; }
@@ -1777,6 +1883,40 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       }
     },
 
+    // SEC-05: owner-only. Collects the state of every .role-perm checkbox
+    // in the Settings > Team matrix and PUTs the resulting matrix to the
+    // backend. On success we refresh the live cache + the signed-in user's
+    // own permission list (if the owner just tweaked a role they belong to,
+    // the sidebar reflects it immediately) and re-render.
+    saveRolePermissions: async () => {
+      const boxes = document.querySelectorAll('input.role-perm');
+      if (!boxes.length) { toast('Nothing to save.'); return; }
+      const matrix = {};
+      boxes.forEach((b) => {
+        const role = b.dataset.role;
+        const perm = b.dataset.perm;
+        if (!role || !perm) return;
+        if (!matrix[role]) matrix[role] = [];
+        if (b.checked) matrix[role].push(perm);
+      });
+      try {
+        await api.team.saveRolePermissions(matrix);
+        // Re-fetch the live matrix so the next render reads whatever the
+        // backend normalised (owner forced to all, unknown keys stripped).
+        await refreshRolePermissions();
+        // The owner's own nav depends on their permissions list — refetch
+        // /auth/me so the sidebar can rerun its filter against fresh data.
+        try {
+          const me = await api.auth.me();
+          setCurrentUser(me);
+        } catch { /* non-fatal — their own row still had owner = all */ }
+        renderPage();
+        toast('Permissions saved.');
+      } catch (err) {
+        toast(`Could not save: ${err.message}`);
+      }
+    },
+
     /* ---------- Barcodes & Stock ---------- */
     bcTab: (el) => {
       const v = el.dataset.v;
@@ -1807,27 +1947,41 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const categoryOptions = categories.map((c) => c.name).filter(Boolean).sort();
       const weaveOptions = [...new Set(products.map((p) => p.weave).filter(Boolean))].sort();
       const occasionOptions = (OCCASIONS_FULL.length ? OCCASIONS_FULL.map((o) => o.name) : OCCASIONS).filter(Boolean).sort();
-      const colourOptions = COLORS.map(([n]) => n).filter(Boolean).sort();
+      // "None" sits at the top of the Colour dropdown so admins can
+      // pick it to flag a product shell (no colour variant). The rest
+      // of the standard palette follows alphabetically.
+      const colourOptions = ['None', ...COLORS.map(([n]) => n).filter(Boolean).sort()];
       const statusOptions = ['Active', 'Draft', 'Hidden'];
       downloadXLSX('products-template.xlsx', [
-        ['name', 'category', 'selling_price', 'mrp', 'qty', 'weave', 'occasions', 'colour', 'sku', 'status'],
+        // Title-cased headers for display. The admin parser + backend
+        // both normalise headers (lowercase, strip spaces/underscores)
+        // so "Selling Price" matches the legacy "selling_price" key.
+        // `Hex Code` is optional — supply it only when you want to
+        // override the auto-resolved swatch for a custom colour name.
+        ['Name', 'Category', 'Selling Price', 'MRP', 'Quantity', 'Weave', 'Occasions', 'Colour', 'Hex Code', 'SKU', 'Status'],
         // Single-colour example — colour and qty are plain values.
-        ['Peacock blue Mysore silk', sampleCat, 12500, 15000, '10', 'Mysore Silk', 'Festive|Everyday', 'Peacock', '', 'Active'],
-        // Multi-colour example — colour and qty are pipe-separated and
-        // line up positionally: 3 variants, 500 pieces each. Hex/sku
-        // follow the same convention when you want to override them.
-        ['Festive silk saree', sampleCat, 9500, 12000, '500|500|500', 'Mysore Silk', 'Festive|Everyday', 'Peacock|Purple|Green', '', 'Active'],
+        ['Peacock blue Mysore silk', sampleCat, 12500, 15000, '10', 'Mysore Silk', 'Festive|Everyday', 'Peacock', '', '', 'Active'],
+        // Multi-colour example — colour / qty / hex are pipe-separated
+        // and line up positionally: 3 variants, 500 pieces each.
+        ['Festive silk saree', sampleCat, 9500, 12000, '500|500|500', 'Mysore Silk', 'Festive|Everyday', 'Peacock|Purple|Green', '', '', 'Active'],
+        // Custom colour name with explicit hex — the Hex Code column
+        // overrides the auto-resolve so "Rust Orange" gets exactly the
+        // swatch you specify instead of a neutral grey fallback.
+        ['Rust Orange Kanjeevaram', sampleCat, 18500, 22000, '5', 'Kanjivaram', 'Festive|Bridal', 'Rust Orange', '#B7410E', '', 'Active'],
         // Multi-colour with a single qty — repeated for every variant,
         // so this row creates 2 variants with 250 pieces each.
-        ['Ivory Banarasi with gold pallu', 'Banarasi', 28000, 32000, '250', 'Banarasi', 'Bridal', 'Ivory|Lavender', '', 'Active'],
-        ['', '', '', '', '', '', '', '', '', ''],
+        ['Ivory Banarasi with gold pallu', 'Banarasi', 28000, 32000, '250', 'Banarasi', 'Bridal', 'Ivory|Lavender', '', '', 'Active'],
+        ['', '', '', '', '', '', '', '', '', '', ''],
       ], {
         validations: {
           1: { label: 'category',  options: categoryOptions },
           5: { label: 'weave',     options: weaveOptions },
-          6: { label: 'occasions', options: occasionOptions },
-          7: { label: 'colour',    options: colourOptions },
-          9: { label: 'status',    options: statusOptions },
+          // `multi: true` → Excel shows the convenience dropdown but
+          // accepts any typed entry silently (no warning popup). Pipe
+          // syntax works for multi-colour / multi-occasion rows.
+          6: { label: 'occasions', options: occasionOptions, multi: true },
+          7: { label: 'colour',    options: colourOptions,   multi: true },
+          10: { label: 'status',   options: statusOptions },
         },
         // Money columns: render with two decimal places (e.g. 12500.00) so
         // the admin sees a currency-shaped number and partial-rupee prices
@@ -1853,7 +2007,7 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
           <form method="dialog" class="dlg">
             <h3 class="dlg-title">Bulk add products</h3>
             <p class="small muted" style="margin:4px 0 14px">
-              Upload a CSV of new products. Each row creates one product with an initial colour variant and goes <b>live on the store immediately</b>. Just type the colour name (Red, Peacock, Ivory, …) — the swatch is picked automatically, no hex code needed. Images are added later from the product&apos;s drawer; until then the fallback image shows on the card. Set the <code>status</code> column to <b>Draft</b> for any row you want to stage instead of publish. Download the template for the exact columns.
+              Upload a CSV of new products. Each row creates one product with an initial colour variant and goes <b>live on the store immediately</b>. Pick a colour from the dropdown or type <b>any custom colour name</b> ("Rust Orange", "Oyster") — if the system doesn&apos;t recognise it, add an optional <code>Hex Code</code> like <code>#B7410E</code> to set the exact swatch. Images are added later from the product&apos;s drawer; until then the fallback image shows on the card. Set the <code>status</code> column to <b>Draft</b> for any row you want to stage instead of publish. Download the template for the exact columns.
             </p>
             <div id="bapDrop" class="br-drop" tabindex="0" role="button" aria-label="Drop CSV here or click to pick a file">
               <div class="br-drop-ico">${icon('dl', 22)}</div>
@@ -1997,14 +2151,23 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
           // Build the SKU → category index fresh for this parse so newly
           // created categories resolve without a page reload.
           const byCat = buildCatIndex();
-          const header = rows[0].map((h) => h.toLowerCase());
-          // Required: name, category, selling_price (or legacy `price`),
-          // colour, occasions.
+          // Normalise header cells so display-friendly titles
+          // ("Selling Price", "MRP", "Quantity") match the internal
+          // keys ("selling_price", "mrp", "qty"). Lowercase, strip
+          // spaces/hyphens, then alias a handful of common variants.
+          const aliases = { quantity: 'qty', compareat: 'mrp', hexcode: 'hex', hexcolour: 'hex', hexcolor: 'hex' };
+          const normaliseHeader = (h) => {
+            const key = String(h || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
+            return aliases[key.replace(/_/g, '')] || key;
+          };
+          const header = rows[0].map(normaliseHeader);
+          // Required: name, category, selling_price (or legacy `price`).
+          // `colour` and `occasions` are both optional now — a product
+          // without colour lands as a shell (no variants, not sellable
+          // until the admin adds variants from the drawer) and shows up
+          // under the "None" chip in the Products page colour filter.
           const hasPrice = header.indexOf('selling_price') >= 0 || header.indexOf('price') >= 0;
-          // `occasions` is no longer required — a product without any
-          // tagged occasion still shows up in search and category views,
-          // just not in occasion-scoped filters.
-          const need = ['name', 'category', 'colour'];
+          const need = ['name', 'category'];
           const missingCols = need.filter((k) => header.indexOf(k) < 0);
           if (!hasPrice) missingCols.push('selling_price');
           if (missingCols.length) {
@@ -2033,8 +2196,14 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
             const qtys = splitList(qtyRaw).map((q) => Math.max(0, parseInt(q, 10) || 0));
             // colour accepts multi-colour: pipe- OR comma-separated. Each
             // value becomes its own variant in the created product.
+            // "None" (case-insensitive) is a shorthand for "no colour"
+            // — pick it from the dropdown to create a product shell
+            // with zero variants, same as leaving the cell blank.
             const colourRaw = r[col('colour')] || '';
-            const colours = splitList(colourRaw);
+            const coloursParsed = splitList(colourRaw);
+            const colours = coloursParsed.length === 1 && coloursParsed[0].toLowerCase() === 'none'
+              ? []
+              : coloursParsed.filter((c) => c.toLowerCase() !== 'none');
             const occasions = (r[col('occasions')] || '').split('|').map((s) => s.trim()).filter(Boolean);
             const weave = col('weave') >= 0 ? r[col('weave')] : '';
             const hex = col('hex') >= 0 ? (r[col('hex')] || '') : '';
@@ -2052,7 +2221,8 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
             if (!category) return { line, name, category, colour: colourRaw, ok: false, error: 'category is empty' };
             if (!Number.isFinite(selling_price) || selling_price <= 0) return { line, name, category, selling_price: priceRaw, colour: colourRaw, ok: false, error: 'selling_price must be a positive number' };
             if (mrp !== null && (!Number.isFinite(mrp) || mrp <= selling_price)) return { line, name, category, selling_price, mrp: mrpRaw, colour: colourRaw, ok: false, error: 'mrp must be greater than selling_price' };
-            if (!colours.length) return { line, name, category, selling_price, colour: colourRaw, ok: false, error: 'colour is empty' };
+            // colour no longer required — blank rows create a product
+            // shell with no variants that the admin fills in later.
             const cat = byCat.get(category.toLowerCase());
             if (!cat) return { line, name, category, selling_price, colour: colourRaw, ok: false, error: `unknown category: ${category}` };
             return {
@@ -2060,7 +2230,10 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
               qty: totalQty, // for the preview summary
               qtys,          // raw per-variant numbers, sent to backend
               colours,       // parsed array, backend receives pipe-joined
-              colour: colours.join(', '), // for the preview cell
+              // "None" in the preview cell when no colour was supplied —
+              // makes it obvious the row will land as a shell without
+              // any sellable variant.
+              colour: colours.length ? colours.join(', ') : 'None',
               occasions, weave, hex, size, sku, status,
               catName: cat.name, ok: true,
             };
@@ -2406,14 +2579,21 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
 
     packShip: async () => {
       const p = getPack(); if (!p) return;
-      const o = ORD[p.oid]; if (!o || !packDone(o)) return;
-      const codes = Object.values(p.got);
+      const o = ORD[p.oid]; if (!o || !packReadyToShip(o)) return;
+      // Ship only the items the admin has ticked. Unticked rows stay in
+      // their current state (Reserved / Packed) on the order so the admin
+      // can either resume the shipment later or cancel the line from the
+      // order drawer.
+      const codes = packIncludedCodes(o);
+      const partial = codes.length < o.items.length;
       try {
         await api.pieces.shipOrder(o.id, codes);
         await api.orders.ship(o.id);
         recordShipped(o, codes);
         await refresh('pieces'); await refresh('orders'); await refresh('shipping'); await refresh('movements');
-        toast(`${o.id} marked as shipped. Its pieces now show as sold in stock.`);
+        toast(partial
+          ? `${o.id}: shipped ${codes.length} of ${o.items.length} items. Remaining items stay reserved on the order.`
+          : `${o.id} marked as shipped. Its pieces now show as sold in stock.`);
         beep(true);
         renderPage(); renderNav();
       } catch (err) { toast(`Failed to ship: ${err.message}`); }
@@ -2423,6 +2603,16 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       const p = getPack(); if (!p) return;
       const i = Number(el.dataset.i);
       p.ticks[i] = el.checked;
+      renderPage();
+    },
+
+    // Per-item ship toggle. The render disables the box for rows the
+    // order marks short with no stock; everything else is tick-able.
+    packInclude: (el) => {
+      const p = getPack(); if (!p) return;
+      const i = Number(el.dataset.i);
+      if (!p.include) p.include = {};
+      p.include[i] = el.checked;
       renderPage();
     },
 
@@ -2509,10 +2699,12 @@ export function handleScan(raw, { navigate, renderPage, renderNav, source }) {
     await api.pieces.move(u.code || u.id, { to: 'Packed', note: `Scanned at the packing bench for ${ord.id}`, by: 'Packing bench' });
     await refresh('pieces');
     pstate.got[idx] = u.code || u.id;
+    if (!pstate.include) pstate.include = {};
+    pstate.include[idx] = true; // newly scanned items default to "ship it"
     const n = Object.keys(pstate.got).length;
     setPackFb('ok', packDone(ord)
       ? `${ord.items.length === 1 ? 'The piece is' : `All ${ord.items.length} pieces are`} in. Scan the courier label or press Mark as shipped.`
-      : `${n} of ${ord.items.length} scanned.`);
+      : `${n} of ${ord.items.length} scanned. Untick a row if you want to hold it back for a later shipment.`);
     beep(true);
     renderPage?.();
   })(), 'pack piece');

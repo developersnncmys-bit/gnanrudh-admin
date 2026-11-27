@@ -381,3 +381,35 @@ export async function refreshTeam() {
   refill(team, []);
   return ensureTeamLoaded();
 }
+
+// SEC-05: live role→permission matrix. Lazy-loaded alongside the team roster
+// so Settings → Team can render the editable permission table without a
+// bootstrap hit for admins who never open the tab.
+export const rolePermissions = {
+  permissions: null, // { key: description } — the catalogue
+  matrix: null,      // { role: [perm, ...] } — current grants
+  loaded: false,
+};
+let rolePermissionsLoadPromise = null;
+export function ensureRolePermissionsLoaded() {
+  if (rolePermissions.loaded) return Promise.resolve(rolePermissions);
+  if (rolePermissionsLoadPromise) return rolePermissionsLoadPromise;
+  rolePermissionsLoadPromise = api.team.rolePermissions()
+    .then((d) => {
+      rolePermissions.permissions = d?.permissions || {};
+      rolePermissions.matrix = d?.matrix || {};
+      rolePermissions.loaded = true;
+      return rolePermissions;
+    })
+    .catch((err) => {
+      console.warn('[data] role-permissions lazy-load failed:', err?.message || err);
+      rolePermissionsLoadPromise = null;
+      return rolePermissions;
+    });
+  return rolePermissionsLoadPromise;
+}
+export async function refreshRolePermissions() {
+  rolePermissionsLoadPromise = null;
+  rolePermissions.loaded = false;
+  return ensureRolePermissionsLoaded();
+}

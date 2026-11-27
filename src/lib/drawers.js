@@ -100,9 +100,44 @@ export function orderDrawer(id) {
         </div>
         <div style="margin-top:10px"><button type="button" class="btn btn-sec btn-sm" data-act="saveOrderGst" data-id="${o.id}">Save GST details</button></div>
       </div>
-      <div class="d-sec"><h3>Shipping via Shiprocket</h3>
-        <dl class="kv"><dt>Weight slab</dt><dd>${esc(o.ship.slab)} (${nf.format(o.ship.weight)} g packed)</dd><dt>Rate charged by Shiprocket</dt><dd>${inr(o.ship.rate)}</dd>${o.ship.awb ? `<dt>Courier</dt><dd>${esc(o.ship.courier)}, AWB ${o.ship.awb}</dd><dt>Estimated delivery</dt><dd>${fmtD(o.ship.etd)}, as reported by the courier</dd>` : `<dt>Pushed</dt><dd>${o.status === 'Payment pending' ? 'Not yet. Waiting for payment.' : '—'}</dd>`}</dl>
-        ${events.length ? `<ol class="timeline" style="margin-top:12px">${events.map((e) => `<li class="${['NDR raised', 'RTO initiated'].includes(e.type) ? 'bad' : 'done'}">${esc(e.type)}${e.detail ? `: ${esc(e.detail)}` : ''}<span class="sub">${esc(dtF.format(new Date(e.at)))}</span></li>`).join('')}</ol>` : ''}</div>
+      ${(() => {
+        const isStorefront = String(o.source || '') === 'Storefront';
+        // For non-storefront orders (Manual entry, Phone, WhatsApp, Walk-in,
+        // Instagram) the Shiprocket-specific fields are meaningless — the
+        // staff handled fulfilment directly. Render a lean "Fulfillment"
+        // panel that keeps only what's useful: the source note, any
+        // directly-booked courier/AWB the staff recorded, and the
+        // fulfilment timeline.
+        if (!isStorefront) {
+          return `<div class="d-sec"><h3>Fulfillment</h3>
+            <p class="small muted" style="margin:0">Source "${esc(o.source || '—')}" — handled in-store, no shipping flow. Order state above reflects the current status.</p>
+          </div>`;
+        }
+        // Storefront orders — full Shiprocket panel: weight/rate quote,
+        // courier + AWB, push status + Retry/Push-now buttons, and the
+        // event timeline.
+        const pushed = Boolean(o.ship.shiprocketOrderId || o.ship.shiprocketShipmentId);
+        const err = o.ship.pushError || '';
+        const paidLike = ['Paid', 'COD collected'].includes(o.payment?.status);
+        let status;
+        if (err) status = pill('Push failed', 'bad');
+        else if (pushed) status = pill('Pushed to Shiprocket', 'ok');
+        else if (paidLike) status = pill('Not pushed yet', 'warn');
+        else status = pill('Waiting for payment', 'info');
+        const canRetry = paidLike;
+        return `<div class="d-sec"><h3>Shipping via Shiprocket</h3>
+          <dl class="kv"><dt>Weight slab</dt><dd>${esc(o.ship.slab)} (${nf.format(o.ship.weight)} g packed)</dd><dt>Rate charged by Shiprocket</dt><dd>${inr(o.ship.rate)}</dd>${o.ship.awb ? `<dt>Courier</dt><dd>${esc(o.ship.courier)}, AWB ${o.ship.awb}</dd><dt>Estimated delivery</dt><dd>${fmtD(o.ship.etd)}, as reported by the courier</dd>` : `<dt>Pushed</dt><dd>${o.status === 'Payment pending' ? 'Not yet. Waiting for payment.' : '—'}</dd>`}</dl>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${status}
+              ${pushed ? `<span class="small muted">Shipment ${esc(o.ship.shiprocketShipmentId || '—')} · order ${esc(o.ship.shiprocketOrderId || '—')}</span>` : ''}
+              ${o.ship.pushedAt ? `<span class="small muted">Last push ${esc(dtF.format(new Date(o.ship.pushedAt)))}</span>` : ''}
+            </div>
+            ${err ? `<p class="note n-bad" style="margin:8px 0 0">${esc(err)}</p>` : ''}
+            ${canRetry ? `<div style="margin-top:10px"><button type="button" class="btn btn-sec btn-sm" data-act="shiprocketPush" data-id="${o.id}">${pushed ? 'Re-push to Shiprocket' : 'Push to Shiprocket now'}</button></div>` : ''}
+          </div>
+          ${events.length ? `<ol class="timeline" style="margin-top:12px">${events.map((e) => `<li class="${['NDR raised', 'RTO initiated'].includes(e.type) ? 'bad' : 'done'}">${esc(e.type)}${e.detail ? `: ${esc(e.detail)}` : ''}<span class="sub">${esc(dtF.format(new Date(e.at)))}</span></li>`).join('')}</ol>` : ''}
+        </div>`;
+      })()}
     </div>
     <div class="d-foot">${o.invoice
       ? `<button type="button" class="btn btn-ghost" data-act="invoice" data-id="${o.id}" style="margin-right:auto">${icon('dl')}Tax invoice</button>`
@@ -133,6 +168,12 @@ function blankOrderDraft() {
     status: 'Payment pending',
     payment: { method: 'UPI', status: 'Pending', rzp: '' },
     generateInvoice: false,
+    // Walk-in / phone customers who aren't in the CRM yet. When
+    // `useNewCustomer` is true, the save action creates the customer
+    // first, then uses its new id for the order. `cid` is ignored in
+    // that mode.
+    useNewCustomer: !customers.length,
+    newCustomer: { name: '', phone: '', city: '' },
   };
 }
 
@@ -207,11 +248,19 @@ export function newOrderDrawer(mode) {
 
   const sel = (id, opts, v, extra = '') => `<select class="ctl" id="${id}"${extra}>${opts.map((o) => `<option value="${esc(ov(o))}"${String(ov(o)) === String(v) ? ' selected' : ''}>${esc(ol(o))}</option>`).join('')}</select>`;
 
-  openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">New order</h2><p class="small muted" style="margin:4px 0 0">Manually record an order from phone, WhatsApp or walk-in. The customer must already exist.</p></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
+  openDrawer(`<div class="d-head"><div class="grow"><h2 class="d-title" id="dTitle">New order</h2><p class="small muted" style="margin:4px 0 0">Manually record an order from phone, WhatsApp or walk-in. Pick an existing customer or add a new one on the fly.</p></div><button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
     <div class="d-body">
-      ${customers.length ? '' : '<p class="note n-warn">No customers in the system yet. Add a customer before creating an order.</p>'}
-      <div class="d-sec"><h3>Customer and delivery</h3><div class="form-grid">
-        <div class="field span2"><label for="no-cust">Customer</label>${customers.length ? `<select class="ctl" id="no-cust">${custOpts}</select>` : '<input class="ctl" id="no-cust" disabled value="No customers available">'}</div>
+      <div class="d-sec"><h3>Customer and delivery</h3>
+        <div class="seg" role="group" aria-label="Customer source" style="margin-bottom:12px">
+          <button type="button" data-act="orderCustMode" data-mode="existing" aria-pressed="${!d.useNewCustomer}"${customers.length ? '' : ' disabled title="No customers yet"'}>Existing customer</button>
+          <button type="button" data-act="orderCustMode" data-mode="new" aria-pressed="${d.useNewCustomer}">+ New customer</button>
+        </div>
+        <div class="form-grid">
+        ${d.useNewCustomer
+          ? `<div class="field"><label for="no-newname">Customer name</label><input class="ctl" id="no-newname" value="${esc(d.newCustomer?.name || '')}" placeholder="Full name" required></div>
+             <div class="field"><label for="no-newphone">Phone</label><input class="ctl" id="no-newphone" inputmode="tel" value="${esc(d.newCustomer?.phone || '')}" placeholder="10-digit mobile" required></div>
+             <div class="field span2"><label for="no-newcity">City (optional)</label><input class="ctl" id="no-newcity" value="${esc(d.newCustomer?.city || '')}" placeholder="For example: Bengaluru"></div>`
+          : `<div class="field span2"><label for="no-cust">Customer</label>${customers.length ? `<select class="ctl" id="no-cust">${custOpts}</select>` : '<input class="ctl" id="no-cust" disabled value="No customers available — switch to + New customer">'}</div>`}
         <div class="field"><label for="no-pin">Delivery pincode</label><input class="ctl" id="no-pin" inputmode="numeric" maxlength="6" value="${esc(d.pin)}" placeholder="6 digits"></div>
         <div class="field"><label for="no-src">Source</label>${sel('no-src', ORDER_SOURCES, d.source)}</div>
       </div></div>
@@ -243,6 +292,19 @@ export function newOrderDrawer(mode) {
 
   const cust = document.getElementById('no-cust');
   if (cust) cust.onchange = () => { d.cid = cust.value; const c = CUST[cust.value]; if (c?.pinPrefix && !d.pin) { d.pin = `${c.pinPrefix}00`; const pinEl = document.getElementById('no-pin'); if (pinEl) pinEl.value = d.pin; } };
+
+  // Bind the inline new-customer inputs when visible.
+  const bindNew = (id, path) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.oninput = () => {
+      d.newCustomer = d.newCustomer || {};
+      d.newCustomer[path] = el.value;
+    };
+  };
+  bindNew('no-newname', 'name');
+  bindNew('no-newphone', 'phone');
+  bindNew('no-newcity', 'city');
 
   const bindText = (id, path) => {
     const el = document.getElementById(id); if (!el) return;
