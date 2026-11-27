@@ -724,7 +724,137 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       if (!list.length) return toast('None of the selected orders has an invoice yet.');
       openDoc(`${plural(list.length, 'tax invoice')}`, list.map((o) => docInvoice(o)).join(''));
     },
-    printDoc: () => window.print(),
+   printDoc: () => {
+  const docBody = document.getElementById('docBody');
+  const thermal = docBody?.querySelector('.plabels.thermal');
+
+  // Keep existing printing for invoices and A4 documents.
+  if (!thermal) {
+    window.print();
+    return;
+  }
+
+  const win = window.open('', '_blank', 'width=600,height=400');
+
+  if (!win) {
+    toast('Please allow popups to print labels.');
+    return;
+  }
+
+  win.document.open();
+
+  win.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Barcode Label</title>
+
+      <style>
+        @page {
+          size: 50mm 25mm;
+          margin: 0;
+        }
+
+        * {
+          box-sizing: border-box;
+        }
+
+        html, body {
+          width: 50mm;
+          margin: 0;
+          padding: 0;
+          background: #fff;
+          color: #000;
+          font-family: Arial, sans-serif;
+        }
+
+        .plabels {
+          display: block;
+          margin: 0;
+          padding: 0;
+        }
+
+        .plabel {
+          width: 50mm;
+          height: 25mm;
+          padding: 1.5mm;
+          margin: 0;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          gap: 0.8mm;
+          break-inside: avoid;
+          break-after: page;
+        }
+
+        .plabel:last-child {
+          break-after: auto;
+        }
+
+        .mini-brand {
+          font-size: 10px;
+          font-weight: bold;
+          text-align: center;
+        }
+
+        .mini-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 4px;
+        }
+
+        .mini-name {
+          flex: 1;
+          min-width: 0;
+          font-size: 8px;
+          font-weight: 600;
+          overflow-wrap: anywhere;
+          line-height: 1.2;
+        }
+
+        .mini-mrp {
+          font-size: 8px;
+          font-weight: bold;
+          white-space: nowrap;
+        }
+
+        .mini-bc {
+          width: 100%;
+        }
+
+        .mini-bc svg {
+          display: block;
+          width: 100%;
+          height: 8mm;
+        }
+
+        .mini-code {
+          text-align: center;
+          font-size: 8px;
+          letter-spacing: 0.5px;
+        }
+      </style>
+    </head>
+
+    <body>
+      ${thermal.outerHTML}
+    </body>
+    </html>
+  `);
+
+  win.document.close();
+
+  win.addEventListener('afterprint', () => win.close(), {
+    once: true
+  });
+
+  setTimeout(() => {
+    win.focus();
+    win.print();
+  }, 300);
+},
     closeDoc: () => document.getElementById('docDlg').close(),
     // Manual payment-status change — a lightweight correction tool, no
     // side effects on reservation / label / invoice. Handy when the
