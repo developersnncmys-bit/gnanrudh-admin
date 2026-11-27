@@ -19,7 +19,9 @@ export function labelHTML(u) {
     <div class="pl-top"><b>${esc(S.name)}</b><b>MRP ${inr(p.price)}</b></div>
     <div class="pl-name">${esc(p.name)}</div>
     <div class="pl-meta">${esc(line1)}<br>${esc(line2)}</div>
-    <div class="pl-bc">${code128(u.code || u.id, 40)}</div>
+   <div class="pl-bc" style="width:100%;max-width:280px;margin:0 auto;">
+  ${code128(u.code || u.id, 40)}
+</div>
     <div class="pl-code">${esc(u.code || u.id)}</div>
     <div class="pl-foot">MRP incl. of all taxes. Net qty 1 piece. Packed by ${esc(S.name)}, ${esc(S.address || '')}. ${esc(S.email || '')}</div>
   </div>`;

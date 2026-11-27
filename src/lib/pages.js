@@ -1034,7 +1034,12 @@ BC_VIEW.setup = () => {
   const sample = pieces.find((u) => u.status === 'In stock');
   return `<div class="grid g2">
     <section class="panel"><div class="panel-head"><div><h2 class="h2">Sample label</h2><p>Scan it with a scanner, or use a phone camera app, to confirm the symbology is readable.</p></div></div>
-      <div class="panel-body">${sample ? `<div class="bc-sample">${code128(sample.code || sample.id, 60)}<div class="pl-code">${esc(sample.code || sample.id)}</div></div>` : '<p class="muted" style="margin:0">Receive some stock first.</p>'}</div></section>
+      <div class="panel-body">${sample ? `<div class="bc-sample" style="width:100%;max-width:300px;margin:0 auto;">
+  ${code128(sample.code || sample.id, 45)}
+  <div class="pl-code">
+    ${esc(sample.code || sample.id)}
+  </div>
+</div>` : '<p class="muted" style="margin:0">Receive some stock first.</p>'}</div></section>
     <section class="panel"><div class="panel-head"><div><h2 class="h2">Scanner settings</h2><p>Any USB or Bluetooth 1D/2D scanner that works as a keyboard.</p></div></div>
       <div class="panel-body"><ul class="list small">
         <li><span class="grow"><b>Mode</b><span class="sub">Keyboard (HID). Most scanners ship this way.</span></span></li>

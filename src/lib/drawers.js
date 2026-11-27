@@ -922,7 +922,14 @@ export function pieceDrawer(code) {
       <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">${pill(u.status === 'Shipped' ? 'Sold, shipped' : u.status, PIECE_TONE[u.status], true)}${u.oid ? `<button type="button" class="link small" data-open="order:${esc(u.oid)}">Order ${esc(u.oid)}</button>` : ''}${u.printed ? '' : pill('Label not printed', 'warn')}</div></div>
       <button type="button" class="btn btn-ghost btn-icon" data-act="closeDrawer" aria-label="Close">${icon('x', 18)}</button></div>
     <div class="d-body">
-      <div class="bc-big">${code128(u.code || u.id, 72)}<div class="pl-code">${esc(u.code || u.id)}</div></div>
+      <div class="bc-big">
+  <div style="width:100%;max-width:300px;margin:0 auto;">
+    ${code128(u.code || u.id, 45)}
+    <div class="pl-code" style="text-align:center;">
+      ${esc(u.code || u.id)}
+    </div>
+  </div>
+</div>
       <div class="d-sec" style="margin-top:18px"><h3>What the label says</h3><dl class="kv">${params.map(([k, x]) => `<dt>${esc(k)}</dt><dd>${esc(x)}</dd>`).join('')}</dl></div>
       <div class="d-sec"><h3>History</h3>${hist.length ? `<ol class="timeline">${hist.slice().reverse().map((m) => `<li class="${m.to === 'Written off' ? 'bad' : 'done'}">${esc(m.to === 'Shipped' ? 'Sold and shipped' : m.to)}: ${esc(m.note || '')}<span class="sub">${esc(dtF.format(new Date(m.at)))}, ${esc(m.by)}</span></li>`).join('')}</ol>` : `<p class="small muted" style="margin:0">In stock since ${esc(fmtD(u.received))}.</p>`}</div>
     </div>
