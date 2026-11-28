@@ -1882,8 +1882,7 @@ export function buildActions({ rerender, renderPage, renderNav, navigate, routeR
       try {
         const res = await api.orders.shiprocketPush(id);
         if (res?.order) Object.assign(o, res.order);
-        if (res?.partial) toast(`Order pushed, but one step failed: ${res?.err || 'see drawer for details'}.`);
-        else toast('Pushed to Shiprocket — AWB assigned and pickup scheduled.');
+        toast('Pushed to Shiprocket — assign AWB from the Shiprocket dashboard.');
         rerender();
         orderDrawer(id);
       } catch (err) {

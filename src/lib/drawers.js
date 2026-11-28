@@ -124,7 +124,17 @@ export function orderDrawer(id) {
         else if (pushed) status = pill('Pushed to Shiprocket', 'ok');
         else if (paidLike) status = pill('Not pushed yet', 'warn');
         else status = pill('Waiting for payment', 'info');
-        const canRetry = paidLike;
+        // Manual push button is shown ONLY for payment paths where the
+        // automatic push can be delayed or absent:
+        //   - COD orders (push fires at creation; admin may need to retry
+        //     if the first attempt failed, e.g. Shiprocket was down).
+        //   - Orders marked paid outside Razorpay (admin "Confirm payment"
+        //     after a bank transfer or similar — no /payment/verify runs).
+        // Razorpay-verified Prepaid orders auto-push on verify and don't
+        // show the button since successful pushes don't need re-triggering.
+        const isCod = o.payment?.method === 'Cash on delivery';
+        const paidWithoutRzp = paidLike && !o.payment?.rzp;
+        const canRetry = isCod || paidWithoutRzp;
         return `<div class="d-sec"><h3>Shipping via Shiprocket</h3>
           <dl class="kv"><dt>Weight slab</dt><dd>${esc(o.ship.slab)} (${nf.format(o.ship.weight)} g packed)</dd><dt>Rate charged by Shiprocket</dt><dd>${inr(o.ship.rate)}</dd>${o.ship.awb ? `<dt>Courier</dt><dd>${esc(o.ship.courier)}, AWB ${o.ship.awb}</dd><dt>Estimated delivery</dt><dd>${fmtD(o.ship.etd)}, as reported by the courier</dd>` : `<dt>Pushed</dt><dd>${o.status === 'Payment pending' ? 'Not yet. Waiting for payment.' : '—'}</dd>`}</dl>
           <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)">
