@@ -10,7 +10,7 @@ import { buildActions, openPalette, renderPalette, choosePalette, CHECK_ACTS, to
 import { installGlobalScanner } from './lib/scanner.js';
 import { LV } from './lib/renderers.js';
 import { debounce, esc, iso, TODAY, validateRequiredIn } from './lib/utils.js';
-import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS, NAV, bootstrap, refresh } from './lib/data.js';
+import { SETTINGS, notifications, CAT, journal, PAGES_CMS, OCCASIONS_FULL, PRICE_RANGES, HERO_SLIDES, HOME_BANNERS, NAV, bootstrap, refresh, ensureSlicesForPage } from './lib/data.js';
 import { api, auth, onAuthExpired } from './lib/api.js';
 import { setCurrentUser, NAV_PERM, can } from './lib/permissions.js';
 import LoginPage from './components/LoginPage.jsx';
@@ -92,6 +92,9 @@ function App() {
   // placeholder ("Admin / …") until this resolves. On 401 the global
   // onAuthExpired handler already handles the sign-out; here we just clear
   // the stale profile if the fetch rejects for any other reason.
+  // NOTE: /auth/me is deduped in api.js, so concurrent callers (this effect
+  // + the 5-second probe + any route-change initiated call) share one
+  // request.
   useEffect(() => {
     if (!signedIn) { setMe(null); setCurrentUser(null); return; }
     let cancelled = false;
@@ -127,9 +130,14 @@ function App() {
   useEffect(() => {
     if (!signedIn) return undefined;
     const PROBE_MS = 5_000;
+    let inFlight = false;
     const probe = () => {
       if (document.visibilityState !== 'visible') return;
-      api.auth.me().catch(() => { /* onAuthExpired already handles 401s */ });
+      if (inFlight) return; // SEC-06: never overlap a probe with its predecessor.
+      inFlight = true;
+      api.auth.me()
+        .catch(() => { /* onAuthExpired already handles 401s */ })
+        .finally(() => { inFlight = false; });
     };
     const intervalId = setInterval(probe, PROBE_MS);
     const onVis = () => { if (document.visibilityState === 'visible') probe(); };
@@ -155,30 +163,20 @@ function App() {
     }
   }, [me, route, navigate]);
 
-  // Live-data refresh on route change. The admin's local pieces/orders/
-  // products arrays are populated once at bootstrap; without this, a
-  // customer order placed via the storefront doesn't update the admin's
-  // "in stock" counts or Orders list until the tab is reloaded. Refetches
-  // the slices that matter for the page the admin just opened; swallows
-  // errors silently so a flaky network doesn't disrupt navigation.
+  // Lazy-load the heavy slices the current page needs. bootstrap() now
+  // only fetches small metadata (settings, categories, scenes, pages,
+  // occasions, price ranges, hero slides, home banners, featured). The
+  // large lists — orders, products, customers, pieces, returns,
+  // shipping, reviews, coupons, journal — only arrive when the admin
+  // actually navigates to a page that reads them. ensureSlicesForPage
+  // is idempotent + dedupes concurrent callers (see data.js) so repeat
+  // navigation is instant and multiple effects can't double-fetch.
   useEffect(() => {
     if (bootState.status !== 'ready') return;
-    const slicesByRoute = {
-      dashboard: ['orders', 'pieces'],
-      orders: ['orders', 'pieces'],
-      products: ['products', 'pieces'],
-      inventory: ['pieces', 'movements'],
-      barcodes: ['pieces', 'movements'],
-      packing: ['orders', 'pieces'],
-      shipping: ['shipping', 'orders'],
-      returns: ['returns', 'orders'],
-      customers: ['customers', 'orders'],
-    };
-    const slices = slicesByRoute[route];
-    if (!slices) return;
     let cancelled = false;
-    Promise.all(slices.map((s) => refresh(s).catch(() => {})))
-      .then(() => { if (!cancelled) rerender(); });
+    ensureSlicesForPage(route)
+      .then(() => { if (!cancelled) rerender(); })
+      .catch(() => { /* ensurers already toast on failure */ });
     return () => { cancelled = true; };
   }, [route, bootState.status, rerender]);
 

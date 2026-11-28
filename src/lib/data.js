@@ -247,56 +247,43 @@ export function computeCRM() {
   });
 }
 
-/* ---------- Bootstrap: fetch everything, then populate ---------- */
+/* ---------- Bootstrap: essentials only, then lazy-load the rest --------- */
 //
-// PERF: `movements` (stock audit trail) deliberately excluded — the
-// collection grows unbounded (37K+ rows in this install, ~19 serial 2K-page
-// requests at ~37 MB). Only the "Stock movements" tab and the piece-history
-// section of the piece drawer read it, so we lazy-load via
-// ensureMovementsLoaded() the first time either entry point opens. See
-// actions.js `bcTab` and drawers.js `pieceDrawer`.
+// PERF: the earlier bootstrap fired 18 list endpoints in parallel the
+// instant the user signed in. Each endpoint that returned over 500 rows
+// then fanned out its own parallel page fetches. The aggregate burst
+// pushed the admin's cold start past Vercel's 60 s function budget and
+// produced the 2-minute dashboard + FUNCTION_INVOCATION_TIMEOUT 504s
+// even though single endpoints responded in 100-300 ms.
+//
+// Shape now:
+//   1. `bootstrap()` fetches only the small singletons/metadata the
+//      shell renders before any page body — settings (store name in
+//      document.title), occasions, priceRanges, heroSlides, homeBanners,
+//      scenes, pages, featured, categories. Fast, small, cheap.
+//   2. Every heavy list has an `ensureXxxLoaded()` helper with the same
+//      in-flight promise dedupe pattern as ensureMovementsLoaded. The
+//      per-route effect in App.jsx calls the ones its page needs.
+//   3. Subsequent navigations reuse the already-populated arrays. The
+//      refresh('slice') map stays authoritative after mutations.
 export async function bootstrap() {
-  // Role-based access: the backend returns 403 for resources the signed-in
-  // role can't access (e.g. a packer hitting /api/categories). We swallow
-  // 403s per-call so a limited role still boots with the slices it can see —
-  // other errors (401, 5xx, network) still bubble up and surface the
-  // "Could not reach the API" page.
   const skip403 = (fallback) => (err) => {
     if (err?.status === 403) return fallback;
     throw err;
   };
-  const [
-    cats, prods, custs, ords, rets, ship, cpns, revs, jrnl, pgs, scns, feat, sett, occs, pricesList, pcs, slides, banners,
-  ] = await Promise.all([
-    api.categories.list().catch(skip403([])),
-    api.products.list().catch(skip403([])),
-    api.customers.list().catch(skip403([])),
-    api.orders.list().catch(skip403([])),
-    api.returns.list().catch(skip403([])),
-    api.shipping.list().catch(skip403([])),
-    api.coupons.list().catch(skip403([])),
-    api.reviews.list().catch(skip403([])),
-    api.journal.list().catch(skip403([])),
-    api.pages.list().catch(skip403([])),
-    api.scenes.list().catch(skip403([])),
-    api.featured.get().catch(skip403({ ids: [] })),
+  const started = performance?.now ? performance.now() : Date.now();
+  const [sett, occs, pricesList, slides, banners, scns, pgs, feat, cats] = await Promise.all([
     api.settings.get().catch(skip403({})),
     api.occasions.list().catch(() => []),
     api.priceRanges.list().catch(() => []),
-    api.pieces.list().catch(() => []),
     api.heroSlides.list().catch(() => []),
     api.homeBanners.list().catch(() => []),
+    api.scenes.list().catch(skip403([])),
+    api.pages.list().catch(skip403([])),
+    api.featured.get().catch(skip403({ ids: [] })),
+    api.categories.list().catch(skip403([])),
   ]);
-
   refill(categories, cats.map(norm));
-  refill(products, prods.map(norm));
-  refill(customers, custs.map((c) => ({ ...norm(c) })));
-  refill(orders, ords.map(norm));
-  refill(returns, rets.map(norm));
-  refill(shipLog, ship.map(norm));
-  refill(coupons, cpns.map((c) => ({ ...norm(c), code: c._id })));
-  refill(reviews, revs.map(norm));
-  refill(journal, jrnl.map(norm));
   refill(PAGES_CMS, pgs.map((p) => ({ ...p, banners: Array.isArray(p.banners) && p.banners.length ? p.banners : (p.banner ? [p.banner] : []) })));
   refill(SCENES, scns);
   refill(OCCASIONS_FULL, (occs || []).map((o) => ({ name: o.name || o._id, parent: o.parent || null, order: o.order ?? 0, image: o.image || '' })));
@@ -304,11 +291,7 @@ export async function bootstrap() {
   refill(PRICE_RANGES, (pricesList || []).map(norm));
   refill(HERO_SLIDES, (slides || []).map(norm));
   refill(HOME_BANNERS, (banners || []).map(norm));
-  refill(pieces, (pcs || []).map((u) => ({ ...norm(u), code: u._id })));
-  // moves intentionally left empty — populated lazily by ensureMovementsLoaded().
-
   setFeatured(Array.isArray(feat?.ids) ? feat.ids : []);
-
   if (sett.store) Object.assign(SETTINGS.store, sett.store);
   if (sett.pay)   Object.assign(SETTINGS.pay, sett.pay);
   if (sett.ship)  Object.assign(SETTINGS.ship, sett.ship);
@@ -316,15 +299,125 @@ export async function bootstrap() {
   if (sett.account) Object.assign(SETTINGS.account, sett.account);
   if (sett.crm)    Object.assign(CRM, sett.crm);
   if (sett.policy) Object.assign(POLICY, sett.policy);
-
   rebuildIndexes();
-  computeCRM();
-  buildInsights();
+  const elapsed = (performance?.now ? performance.now() : Date.now()) - started;
+  console.log(`[bootstrap] essentials loaded in ${Math.round(elapsed)}ms`);
+}
+
+// Generic lazy-load helper used by every heavy slice below.
+//  - First caller fires the network request; concurrent callers share the
+//    SAME in-flight promise so a route-change + a drawer + a probe can't
+//    each kick off their own fetch.
+//  - After the first load, repeat calls within STALE_MS resolve immediately
+//    with the already-populated array (fast nav between pages). If the
+//    slice is older than STALE_MS, ensure() awaits a background refresh
+//    so the admin sees new rows (orders placed via the storefront, etc.)
+//    without staying on a stale screen indefinitely.
+//  - On failure the cached promise clears so the next call can retry.
+const STALE_MS = 30_000;
+function makeEnsurer(name, fetchFn, applyFn) {
+  let promise = null;
+  let loadedAt = 0;
+  const ensure = () => {
+    const now = Date.now();
+    if (loadedAt && now - loadedAt < STALE_MS) return Promise.resolve();
+    if (promise) return promise;
+    const started = performance?.now ? performance.now() : Date.now();
+    promise = fetchFn()
+      .then((d) => {
+        applyFn(d);
+        loadedAt = Date.now();
+        const elapsed = (performance?.now ? performance.now() : Date.now()) - started;
+        console.log(`[ensure:${name}] loaded in ${Math.round(elapsed)}ms`);
+      })
+      .catch((err) => {
+        if (err?.status === 403) { loadedAt = Date.now(); return; }
+        console.warn(`[ensure:${name}] failed:`, err?.message || err);
+      })
+      .finally(() => { promise = null; });
+    return promise;
+  };
+  const invalidate = () => { loadedAt = 0; promise = null; };
+  return { ensure, invalidate };
+}
+
+const _orders = makeEnsurer('orders', () => api.orders.list(), (d) => { refill(orders, d.map(norm)); rebuildIndexes(); });
+const _products = makeEnsurer('products', () => api.products.list(), (d) => { refill(products, d.map(norm)); rebuildIndexes(); });
+const _customers = makeEnsurer('customers', () => api.customers.list(), (d) => { refill(customers, d.map((c) => ({ ...norm(c) }))); rebuildIndexes(); computeCRM(); buildInsights(); });
+const _pieces = makeEnsurer('pieces', () => api.pieces.list(), (d) => { refill(pieces, d.map((u) => ({ ...norm(u), code: u._id }))); rebuildIndexes(); });
+const _returns = makeEnsurer('returns', () => api.returns.list(), (d) => { refill(returns, d.map(norm)); });
+const _shipping = makeEnsurer('shipping', () => api.shipping.list(), (d) => { refill(shipLog, d.map(norm)); });
+const _reviews = makeEnsurer('reviews', () => api.reviews.list(), (d) => { refill(reviews, d.map(norm)); });
+const _coupons = makeEnsurer('coupons', () => api.coupons.list(), (d) => { refill(coupons, d.map((c) => ({ ...norm(c), code: c._id }))); });
+const _journal = makeEnsurer('journal', () => api.journal.list(), (d) => { refill(journal, d.map(norm)); });
+
+export const ensureOrdersLoaded    = _orders.ensure;
+export const ensureProductsLoaded  = _products.ensure;
+export const ensureCustomersLoaded = _customers.ensure;
+export const ensurePiecesLoaded    = _pieces.ensure;
+export const ensureReturnsLoaded   = _returns.ensure;
+export const ensureShippingLoaded  = _shipping.ensure;
+export const ensureReviewsLoaded   = _reviews.ensure;
+export const ensureCouponsLoaded   = _coupons.ensure;
+export const ensureJournalLoaded   = _journal.ensure;
+
+// Page -> slices required for the arrays its template reads. Centralised
+// so App.jsx doesn't need to know what each page consumes. The dashboard
+// needs most things (queue + latest-orders panel) but not coupons /
+// journal / scenes which never appear in the shell.
+const SLICES_BY_PAGE = {
+  dashboard: ['orders', 'customers', 'pieces', 'products', 'returns', 'reviews', 'shipping'],
+  orders:    ['orders', 'customers', 'pieces', 'products'],
+  packing:   ['orders', 'pieces', 'products'],
+  shipping:  ['shipping', 'orders', 'customers'],
+  returns:   ['returns', 'orders', 'customers'],
+  products:  ['products', 'pieces'],
+  inventory: ['products', 'pieces'],
+  barcodes:  ['products', 'pieces'],
+  customers: ['customers', 'orders'],
+  reviews:   ['reviews', 'products', 'customers'],
+  coupons:   ['coupons'],
+  journal:   ['journal'],
+  analytics: ['orders', 'customers', 'products'],
+  insights:  ['orders', 'products', 'customers'],
+  productAnalytics: ['orders', 'products'],
+  storefront: [],
+  categories: [],
+  occasions: [],
+  priceRanges: [],
+  scenes: [],
+  settings: [],
+};
+const ENSURERS = {
+  orders: ensureOrdersLoaded,
+  products: ensureProductsLoaded,
+  customers: ensureCustomersLoaded,
+  pieces: ensurePiecesLoaded,
+  returns: ensureReturnsLoaded,
+  shipping: ensureShippingLoaded,
+  reviews: ensureReviewsLoaded,
+  coupons: ensureCouponsLoaded,
+  journal: ensureJournalLoaded,
+};
+export function ensureSlicesForPage(pageKey) {
+  const slices = SLICES_BY_PAGE[pageKey];
+  if (!slices || !slices.length) return Promise.resolve();
+  return Promise.all(slices.map((s) => ENSURERS[s]?.() ?? Promise.resolve()));
 }
 
 /* Reload a single collection after a write; used after bulk ops where
-   the server is the source of truth. */
+   the server is the source of truth. Also clears the matching ensurer's
+   "already loaded" flag so the next ensureXxxLoaded() will re-fetch. */
+const ENSURER_HANDLES = {
+  orders: _orders, products: _products, customers: _customers, pieces: _pieces,
+  returns: _returns, shipping: _shipping, reviews: _reviews, coupons: _coupons,
+  journal: _journal,
+};
 export async function refresh(resource) {
+  // Reset the lazy-loader's "loaded" flag so the fresh data from this
+  // explicit refresh becomes the new baseline (and a later ensure() is
+  // a no-op). Skipped for slices that have no ensurer (metadata).
+  ENSURER_HANDLES[resource]?.invalidate();
   const map = {
     categories: () => api.categories.list().then((d) => { refill(categories, d.map(norm)); rebuildIndexes(); }),
     products:   () => api.products.list().then((d)   => { refill(products, d.map(norm));   rebuildIndexes(); }),

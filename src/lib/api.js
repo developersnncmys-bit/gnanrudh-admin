@@ -22,10 +22,34 @@ function authHeader() {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-async function request(path, { method = 'GET', body, query } = {}) {
-  const qs = query ? '?' + new URLSearchParams(
-    Object.entries(query).filter(([, v]) => v !== undefined && v !== null && v !== '')
-  ).toString() : '';
+// PERF: in-flight dedupe + short GET micro-cache.
+// Two unrelated effects (/auth/me probe, a route-change refresh, a
+// drawer open) can legitimately request the same URL in the same tick.
+// Without dedupe each one spins up its own Vercel function invocation
+// and multiplies the fan-out that produced the 2-minute dashboard /
+// 504 FUNCTION_INVOCATION_TIMEOUT. With dedupe N concurrent callers
+// share ONE network round-trip and resolve together.
+//
+// Only GETs with no body go through the cache; mutations (POST/PATCH/
+// PUT/DELETE) always hit the network. The cache TTL is deliberately
+// tiny (1.5 s) — long enough to absorb a React double-render or an
+// in-flight route change kicking off its own refresh, short enough
+// that an admin never sees stale data on manual navigation.
+const INFLIGHT = new Map();           // key -> Promise<result>
+const GET_CACHE = new Map();          // key -> { at, value }
+const GET_CACHE_TTL = 1_500;          // ms
+
+function cacheKey(path, qs) { return `GET ${path}${qs}`; }
+
+export function invalidateGetCache(pathPrefix) {
+  if (!pathPrefix) { GET_CACHE.clear(); return; }
+  for (const k of GET_CACHE.keys()) {
+    // keys are "GET <path><qs>" — match against the path portion.
+    if (k.startsWith(`GET ${pathPrefix}`)) GET_CACHE.delete(k);
+  }
+}
+
+async function doFetch(path, qs, method, body) {
   const res = await fetch(`${BASE}${path}${qs}`, {
     method,
     headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...authHeader() },
@@ -57,6 +81,40 @@ async function request(path, { method = 'GET', body, query } = {}) {
   return ct.includes('application/json') ? res.json() : res.text();
 }
 
+async function request(path, { method = 'GET', body, query } = {}) {
+  const qs = query ? '?' + new URLSearchParams(
+    Object.entries(query).filter(([, v]) => v !== undefined && v !== null && v !== '')
+  ).toString() : '';
+
+  // Mutations bypass cache and invalidate any GETs under the same resource path.
+  if (method !== 'GET' || body) {
+    try {
+      return await doFetch(path, qs, method, body);
+    } finally {
+      // /products/:id PATCH should bust /products GETs too; strip trailing /:id.
+      const resource = path.replace(/^\/+/, '').split('/')[0];
+      if (resource) invalidateGetCache(`/${resource}`);
+    }
+  }
+
+  const key = cacheKey(path, qs);
+  const now = Date.now();
+  const cached = GET_CACHE.get(key);
+  if (cached && now - cached.at < GET_CACHE_TTL) return cached.value;
+
+  const inflight = INFLIGHT.get(key);
+  if (inflight) return inflight;
+
+  const p = doFetch(path, qs, method, body)
+    .then((value) => {
+      GET_CACHE.set(key, { at: Date.now(), value });
+      return value;
+    })
+    .finally(() => { INFLIGHT.delete(key); });
+  INFLIGHT.set(key, p);
+  return p;
+}
+
 // PERF-03: backend caps lists at PAGE_SIZE rows per request (bumped to 500
 // server-side). Paging strategy:
 //   1. Fetch page 0 to learn the collection's total.
@@ -66,7 +124,14 @@ async function request(path, { method = 'GET', body, query } = {}) {
 //      this collapses ~90 serial round-trips (~9 s) into one first call
 //      plus ~17 parallel calls (~200 ms).
 const PAGE_SIZE = 500;
-const PARALLEL_LIMIT = 6; // concurrent in-flight page fetches — balances throughput against MongoDB connection-pool + Vercel function limits
+// PERF: lowered from 6 to 3. Bootstrap fires 18 list endpoints in parallel;
+// each over-500-row collection then fans out to its own worker pool. At
+// PARALLEL_LIMIT=6 the aggregate burst was 100+ concurrent Vercel function
+// invocations against a maxPoolSize=10 Mongo pool — individual queries
+// stayed under 5 s but connection waits chained into 60 s+ (504s). At 3
+// the burst caps at ~54 and the pool keeps up, while a 10k-row collection
+// still drains in ~7 parallel waves instead of 20 serial.
+const PARALLEL_LIMIT = 3;
 const PARALLEL_CAP = 1000; // sanity cap so a misreported total can't blow up the browser
 async function list(path, query = {}) {
   const first = await request(path, { query: { limit: PAGE_SIZE, skip: 0, ...query } });
